@@ -1,7 +1,7 @@
 # wishport
 이력 아카이빙 및 경험 기반 개인화된 자기소개서 생성 Project
 
-<img width="2816" height="1567" alt="Image" src="https://github.com/user-attachments/assets/00f56a21-0b94-448f-bc7a-ec43f8c5c58e" />
+<img width="2816" height="1567" alt="Image" src="https://github.com/user-attachments/assets/74d7b3ec-a7ec-4855-91e5-880e9f3f4d9f" />
 
 <img width="2816" height="1567" alt="Image" src="https://github.com/user-attachments/assets/222d614e-4318-4042-a142-5c6ea8e5ec03" />
 
