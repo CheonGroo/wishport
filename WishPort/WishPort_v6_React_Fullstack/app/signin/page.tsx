@@ -1,3 +1,0 @@
-import { ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
-
-export default function SignInPage(){ return <main className="signin-screen"><div className="signin-glow one"/><div className="signin-glow two"/><section className="signin-card"><div className="signin-brand"><span>✦</span> Wish Port</div><div className="signin-copy"><div className="eyebrow">YOUR CAREER CONTEXT, IN ONE PLACE</div><h1>떠다니는 경험들을<br/>한 곳에 모아보세요.</h1><p>한 번 정리한 경험은 다음 지원과 다른 AI에서도 다시 꺼내 쓸 수 있어요.</p></div><a className="google-button" href="/api/auth/google/start"><span className="google-g">G</span>Google로 계속하기<ArrowRight/></a><a href="/" className="demo-link"><Sparkles/> 데모 Archive 먼저 둘러보기</a><footer><ShieldCheck/> 로그인 정보는 Career Archive와 분리해 안전하게 관리합니다.</footer></section></main>; }
