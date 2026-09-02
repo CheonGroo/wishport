@@ -1,5 +1,6 @@
 # wishport
-이력 아카이빙 및 경험 기반 개인화된 자기소개서 생성 Project
+
+이력 아카이빙 및 경험 기반 개인화된 자기소개서 생성
 
 <img width="2816" height="1490" alt="Image" src="https://github.com/user-attachments/assets/2b6a6032-0511-44c4-9475-1ef69c803dd8" />
 
