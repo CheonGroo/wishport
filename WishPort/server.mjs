@@ -148,7 +148,33 @@ async function callOpenAI(payload) {
   }
 }
 
-const requireUser = (req, res) => {
+const readSupabaseUser = async (req) => {
+  const authorization = String(req.headers.authorization || "");
+  if (!authorization.startsWith("Bearer ") || !process.env.SUPABASE_URL) return null;
+  try {
+    const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "",
+        Authorization: authorization,
+      },
+    });
+    if (!response.ok) return null;
+    const profile = await response.json();
+    const user = { id: profile.id, name: profile.user_metadata?.full_name || profile.user_metadata?.name || profile.email, email: profile.email || "", picture: profile.user_metadata?.avatar_url || "" };
+    if (process.env.SUPABASE_SECRET_KEY) {
+      fetch(`${process.env.SUPABASE_URL}/rest/v1/user_profiles?on_conflict=id`, {
+        method: "POST",
+        headers: { apikey: process.env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${process.env.SUPABASE_SECRET_KEY}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ id: user.id, email: user.email, display_name: user.name, avatar_url: user.picture, updated_at: new Date().toISOString() }),
+      }).catch(() => {});
+    }
+    return user;
+  } catch { return null; }
+};
+
+const requireUser = async (req, res) => {
+  const supabaseUser = await readSupabaseUser(req);
+  if (supabaseUser) { ensureUserData(supabaseUser); return supabaseUser; }
   const user = readSession(req);
   if (!user) json(res, 401, { error: "로그인이 필요합니다." });
   return user;
@@ -191,7 +217,7 @@ export async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/logout" && req.method === "POST") return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
 
-  const user = requireUser(req, res);
+  const user = await requireUser(req, res);
   if (!user) return;
   const parts = pathname.split("/").filter(Boolean);
 
