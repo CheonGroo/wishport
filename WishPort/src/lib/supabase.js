@@ -18,8 +18,10 @@ export function supabaseUser(user) {
   if (!user) return null;
   return {
     id: user.id,
-    name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
+    name:
+      user.user_metadata?.full_name || user.user_metadata?.name || user.email,
     email: user.email || "",
-    picture: user.user_metadata?.avatar_url || user.user_metadata?.picture || "",
+    picture:
+      user.user_metadata?.avatar_url || user.user_metadata?.picture || "",
   };
 }

@@ -2884,9 +2884,15 @@ export default function App() {
     demoAuthEnabled: true,
   });
   const [user, setUser] = useState(undefined);
+  const [authMessage, setAuthMessage] = useState("로그인 정보를 확인하는 중입니다.");
   const [data, setData] = useState(blankData);
   const [loadingData, setLoadingData] = useState(false);
-  const [page, setPage] = useState(() => window.location.pathname === "/content" ? "archive" : (window.location.hash.slice(1) || "archive"));
+  const [page, setPage] = useState(() => {
+    const hashPage = window.location.hash.slice(1);
+    if (window.location.pathname === "/content") return hashPage || "archive";
+    if (window.location.pathname === "/auth/callback") return "archive";
+    return hashPage || "archive";
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeEssayId, setActiveEssayId] = useState("");
   const [archiveExperienceId, setArchiveExperienceId] = useState("");
@@ -2899,6 +2905,15 @@ export default function App() {
     setToast(message);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 2800);
+  }, []);
+  const enterContent = useCallback((nextUser, nextPage = "archive") => {
+    setUser(nextUser);
+    setPage(nextPage);
+    window.history.replaceState(
+      { page: nextPage },
+      "",
+      `/content#${nextPage}`,
+    );
   }, []);
   const loadData = useCallback(
     async (silent = false) => {
@@ -2929,34 +2944,61 @@ export default function App() {
         const nextConfig = await api("/api/config");
         if (active) setConfig(nextConfig);
         if (supabase) {
+          const isCallback = window.location.pathname === "/auth/callback";
+          const params = new URLSearchParams(window.location.search);
+          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+          const callbackError =
+            params.get("error_description") ||
+            params.get("error") ||
+            hashParams.get("error_description") ||
+            hashParams.get("error");
+
+          if (callbackError) {
+            throw new Error(callbackError);
+          }
+
+          if (isCallback && params.has("code")) {
+            setAuthMessage("Google 로그인 결과를 확인하는 중입니다.");
+            const { error } = await supabase.auth.exchangeCodeForSession(
+              params.get("code"),
+            );
+            if (error) throw error;
+          }
+
           const { data } = await supabase.auth.getSession();
-          if (active && data.session?.user) setUser(supabaseUser(data.session.user));
-          else if (active) setUser(null);
+          if (!active) return;
+          if (data.session?.user) enterContent(supabaseUser(data.session.user));
+          else setUser(null);
         } else {
           const session = await api("/api/session");
           if (active) setUser(session.user || null);
         }
-      } catch { if (active) setUser(null); }
+      } catch (error) {
+        if (active) {
+          setUser(null);
+          if (window.location.pathname === "/auth/callback") {
+            window.history.replaceState({}, "", "/");
+            notify(error.message || "로그인을 완료하지 못했습니다.");
+          }
+        }
+      }
     };
     loadAuth();
     if (!supabase) return () => { active = false; };
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) setUser(supabaseUser(session?.user));
+      if (active && session?.user) enterContent(supabaseUser(session.user));
+      if (active && !session?.user) setUser(null);
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
-  }, []);
+  }, [enterContent, notify]);
   useEffect(() => {
     if (user) loadData();
   }, [user, loadData]);
   useEffect(() => {
-    if (user && window.location.pathname === "/auth/callback") {
-      window.history.replaceState({ page: "archive" }, "", "/content");
-      setPage("archive");
-    }
-  }, [user]);
-  useEffect(() => {
     if (!user) return undefined;
-    window.history.replaceState({ page: "archive" }, "", "#archive");
+    if (window.location.pathname !== "/content") {
+      window.history.replaceState({ page }, "", `/content#${page}`);
+    }
     const onPopState = (event) => {
       window.dispatchEvent(new Event("wishport:flush"));
       setPage(event.state?.page || "archive");
@@ -2972,7 +3014,7 @@ export default function App() {
       window.history[replace ? "replaceState" : "pushState"](
         { page: nextPage, essayId },
         "",
-        `#${nextPage}`,
+        `/content#${nextPage}`,
       );
     },
     [activeEssayId],
@@ -3139,13 +3181,13 @@ export default function App() {
     return (
       <div className="app-loading">
         <Cloud size={28} fill="currentColor" />
-        <span>Wish Port</span>
+        <span>{authMessage}</span>
       </div>
     );
   if (!user)
     return (
       <>
-        <LandingPage config={config} onSignedIn={(nextUser) => { setUser(nextUser); window.history.replaceState({}, "", "/content"); }} notify={notify} />
+        <LandingPage config={config} onSignedIn={enterContent} notify={notify} />
         {toast && <div className="toast">{toast}</div>}
       </>
     );
