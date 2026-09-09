@@ -2949,6 +2949,12 @@ export default function App() {
     if (user) loadData();
   }, [user, loadData]);
   useEffect(() => {
+    if (user && window.location.pathname === "/auth/callback") {
+      window.history.replaceState({ page: "archive" }, "", "/content");
+      setPage("archive");
+    }
+  }, [user]);
+  useEffect(() => {
     if (!user) return undefined;
     window.history.replaceState({ page: "archive" }, "", "#archive");
     const onPopState = (event) => {
