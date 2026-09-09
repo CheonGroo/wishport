@@ -2,7 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
+import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
+import { GoogleGenAI } from "@google/genai";
 import {
   createApplication,
   createArchiveItem,
@@ -25,14 +27,22 @@ import {
   updateExperience,
   updateProfile,
   updateQuestion,
-} from "./db.mjs";
+} from "./supabaseDb.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+try {
+  loadEnvFile(join(__dirname, ".env"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 4173);
 const sessionSecret = process.env.SESSION_SECRET || "wish-port-local-development-secret";
 const demoAuthEnabled = process.env.DEMO_AUTH_ENABLED !== "false" && !isProduction;
 const requests = new Map();
+const gemini = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  : null;
 
 const json = (res, status, body, headers = {}) => {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
@@ -127,8 +137,201 @@ const mockEssay = ({ contextRecords = [], mode, feedback, question }) => {
   return `[${title}, ${headingResult}]\n\n${question ? "문항의 핵심을 실제 경험으로 설명하겠습니다. " : ""}${situation} 당시 제가 해결해야 할 과제는 ${task} 저는 ${action} 그 결과 ${result}${revision} 이 경험을 바탕으로 지원 직무에서도 근거를 확인하고 관계자와 기준을 맞추며 맡은 일을 결과로 연결하겠습니다.`;
 };
 
+const archiveInterviewPrompt = (answers = {}) => `
+당신은 취업 준비용 경험 아카이브 편집자입니다. 사용자의 답변만 근거로 Archive 경험 카드를 JSON으로 정리하세요.
+
+프로젝트/경험: ${answers.project || "미입력"}
+상황/맥락: ${answers.context || "미입력"}
+어려웠던 문제: ${answers.problem || "미입력"}
+직접 한 행동: ${answers.action || "미입력"}
+결과/배운 점: ${answers.result || "미입력"}
+
+JSON만 반환하세요. 코드블록을 쓰지 마세요.
+스키마:
+{
+  "title": "짧은 프로젝트명 또는 경험명",
+  "meta": "역할 · 유형",
+  "summary": "이력서에 넣기 좋은 한 문장 요약",
+  "evidence": "자기소개서 근거로 쓸 수 있는 구체적 원본 근거",
+  "star": {
+    "situation": "상황",
+    "task": "과제",
+    "action": "행동",
+    "result": "결과"
+  },
+  "chips": [
+    ["핵심 소재", "material"],
+    ["확인된 결과", "result"],
+    ["드러나는 역량", "skill"],
+    ["산출물", "output"]
+  ]
+}
+
+규칙:
+- 사용자가 말하지 않은 수치, 수상, 성과를 만들지 마세요.
+- 비어 있는 답변은 추측하지 말고 담백하게 일반화하세요.
+- title은 20자 이내로 작성하세요.
+- chips의 두 번째 값은 material, result, skill, output 중 하나여야 합니다.
+`.trim();
+
+function parseJsonObject(text) {
+  const raw = String(text || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("AI 응답을 JSON으로 해석하지 못했습니다.");
+    return JSON.parse(match[0]);
+  }
+}
+
+function normalizeExperiencePayload(value = {}) {
+  const star = value.star || {};
+  const chips = Array.isArray(value.chips)
+    ? value.chips
+        .filter((chip) => Array.isArray(chip) && chip[0])
+        .map(([label, tone]) => [
+          String(label).slice(0, 28),
+          ["material", "result", "skill", "output"].includes(tone)
+            ? tone
+            : "material",
+        ])
+        .slice(0, 4)
+    : [];
+  return {
+    title: String(value.title || "새 경험").trim().slice(0, 40),
+    meta: String(value.meta || "").trim().slice(0, 80),
+    summary: String(value.summary || "").trim(),
+    evidence: String(value.evidence || "").trim(),
+    star: {
+      situation: String(star.situation || "").trim(),
+      task: String(star.task || "").trim(),
+      action: String(star.action || "").trim(),
+      result: String(star.result || "").trim(),
+    },
+    chips,
+  };
+}
+
+function mockArchiveExperience(answers = {}) {
+  const title = String(answers.project || "새 경험").trim();
+  const context = String(answers.context || "구체적인 맥락을 정리하는 중입니다.").trim();
+  const problem = String(answers.problem || "해결해야 할 문제가 있었습니다.").trim();
+  const action = String(answers.action || "문제를 나누어 확인하고 실행 가능한 방식으로 정리했습니다.").trim();
+  const result = String(answers.result || "그 과정에서 실행 기준을 세우는 법을 배웠습니다.").trim();
+  return normalizeExperiencePayload({
+    title,
+    meta: "경험 정리 · Archive",
+    summary: `${title}에서 문제를 구조화하고 실행 기준을 만든 경험.`,
+    evidence: `${context} ${problem} ${action} ${result}`,
+    star: { situation: context, task: problem, action, result },
+    chips: [
+      ["문제 구조화", "material"],
+      ["실행 기준 정리", "result"],
+      ["문제해결", "skill"],
+      ["경험 아카이브", "output"],
+    ],
+  });
+}
+
+async function callGeminiText(prompt) {
+  if (!gemini) return null;
+  const response = await gemini.models.generateContent({
+    model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+    contents: prompt,
+  });
+  return response.text;
+}
+
+async function callGeminiFile(prompt, file = {}) {
+  if (!gemini) return null;
+  const base64 = String(file.data || "").split(",").pop();
+  const response = await gemini.models.generateContent({
+    model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType: file.type || "application/octet-stream",
+              data: base64,
+            },
+          },
+        ],
+      },
+    ],
+  });
+  return response.text;
+}
+
+async function structureArchiveExperience(answers) {
+  const prompt = archiveInterviewPrompt(answers);
+  if (gemini) {
+    const text = await callGeminiText(prompt);
+    return { experience: normalizeExperiencePayload(parseJsonObject(text)), provider: "gemini" };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5-mini", input: prompt, max_output_tokens: 900 }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenAI API ${response.status}`);
+      const result = await response.json();
+      const text = result.output_text || result.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
+      return { experience: normalizeExperiencePayload(parseJsonObject(text)), provider: "openai" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { experience: mockArchiveExperience(answers), provider: "demo" };
+}
+
+async function extractArchiveItemFromFile(file = {}, kind = "achievement") {
+  const label = kind === "asset" ? "수상 경력 또는 교육사항" : "어학성적 또는 자격증";
+  const prompt = `
+첨부된 ${label} 증빙 파일에서 사용자가 Archive에 저장할 정보를 JSON으로 추출하세요.
+보이지 않는 정보는 빈 문자열로 두고, 추측하지 마세요.
+
+JSON만 반환하세요.
+{
+  "title": "자격명/시험명/수상명/교육명",
+  "grade": "등급/점수/상태",
+  "issuer": "발급기관/주최기관/교육기관",
+  "acquiredAt": "취득일자/수료일자/수상일자",
+  "detail": "짧은 설명",
+  "ocrText": "읽힌 주요 원문"
+}
+`.trim();
+  if (!gemini) {
+    return {
+      item: {
+        title: "",
+        grade: "",
+        issuer: "",
+        acquiredAt: "",
+        detail: "",
+        ocrText: "",
+      },
+      provider: "demo",
+    };
+  }
+  const text = await callGeminiFile(prompt, file);
+  return { item: parseJsonObject(text), provider: "gemini" };
+}
+
 async function callOpenAI(payload) {
-  if (!process.env.OPENAI_API_KEY) return { text: mockEssay(payload), demo: true };
+  if (gemini) {
+    const text = await callGeminiText(llmPrompt(payload));
+    return { text, demo: false, provider: "gemini" };
+  }
+  if (!process.env.OPENAI_API_KEY) return { text: mockEssay(payload), demo: true, provider: "demo" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   try {
@@ -174,7 +377,7 @@ const readSupabaseUser = async (req) => {
 
 const requireUser = async (req, res) => {
   const supabaseUser = await readSupabaseUser(req);
-  if (supabaseUser) { ensureUserData(supabaseUser); return supabaseUser; }
+  if (supabaseUser) { await ensureUserData(supabaseUser); return supabaseUser; }
   const user = readSession(req);
   if (!user) json(res, 401, { error: "로그인이 필요합니다." });
   return user;
@@ -186,8 +389,8 @@ export async function handleApi(req, res, pathname) {
   if (pathname === "/api/config" && req.method === "GET") {
     return json(res, 200, {
       googleClientId: process.env.GOOGLE_CLIENT_ID || "",
-      llmEnabled: Boolean(process.env.OPENAI_API_KEY),
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
+      llmEnabled: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY),
+      model: process.env.GEMINI_MODEL || process.env.OPENAI_MODEL || "gemini-3.6-flash",
       demoAuthEnabled,
     });
   }
@@ -197,7 +400,7 @@ export async function handleApi(req, res, pathname) {
   if (pathname === "/api/auth/demo" && req.method === "POST") {
     if (!demoAuthEnabled) return json(res, 403, { error: "데모 로그인이 비활성화되어 있습니다." });
     const user = { id: "demo-user", name: "천그루", email: "groo@example.com", picture: "" };
-    ensureUserData(user);
+    await ensureUserData(user);
     return json(res, 200, { user }, { "Set-Cookie": sessionCookie(signSession(user)) });
   }
 
@@ -211,7 +414,7 @@ export async function handleApi(req, res, pathname) {
     const emailVerified = profile.email_verified === true || profile.email_verified === "true";
     if (!validIssuer || profile.aud !== process.env.GOOGLE_CLIENT_ID || !emailVerified) return json(res, 401, { error: "허용되지 않은 Google 계정입니다." });
     const user = { id: profile.sub, name: profile.name || profile.email, email: profile.email, picture: profile.picture || "" };
-    ensureUserData(user);
+    await ensureUserData(user);
     return json(res, 200, { user }, { "Set-Cookie": sessionCookie(signSession(user)) });
   }
 
@@ -221,59 +424,59 @@ export async function handleApi(req, res, pathname) {
   if (!user) return;
   const parts = pathname.split("/").filter(Boolean);
 
-  if (pathname === "/api/bootstrap" && req.method === "GET") return json(res, 200, getBootstrap(user));
+  if (pathname === "/api/bootstrap" && req.method === "GET") return json(res, 200, await getBootstrap(user));
 
   if (pathname === "/api/profile" && req.method === "PATCH") {
-    return json(res, 200, { profile: updateProfile(user.id, await readBody(req)) });
+    return json(res, 200, { profile: await updateProfile(user.id, await readBody(req)) });
   }
 
   if (pathname === "/api/experiences" && req.method === "POST") {
     const body = await readBody(req);
     if (!String(body.title || "").trim()) return json(res, 400, { error: "경험 이름을 입력해 주세요." });
-    return json(res, 201, { experience: createExperience(user.id, body) });
+    return json(res, 201, { experience: await createExperience(user.id, body) });
   }
   if (parts[1] === "experiences" && parts[2] && req.method === "PATCH") {
-    const experience = updateExperience(user.id, parts[2], await readBody(req));
+    const experience = await updateExperience(user.id, parts[2], await readBody(req));
     return experience ? json(res, 200, { experience }) : notFound(res, "경험");
   }
   if (parts[1] === "experiences" && parts[2] && req.method === "DELETE") {
-    return deleteExperience(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "경험");
+    return await deleteExperience(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "경험");
   }
 
   if (pathname === "/api/archive-items" && req.method === "POST") {
     const body = await readBody(req);
     if (!String(body.title || "").trim()) return json(res, 400, { error: "항목 이름을 입력해 주세요." });
-    return json(res, 201, { item: createArchiveItem(user.id, body) });
+    return json(res, 201, { item: await createArchiveItem(user.id, body) });
   }
   if (parts[1] === "archive-items" && parts[2] && req.method === "PATCH") {
-    const item = updateArchiveItem(user.id, parts[2], await readBody(req));
+    const item = await updateArchiveItem(user.id, parts[2], await readBody(req));
     return item ? json(res, 200, { item }) : notFound(res);
   }
   if (parts[1] === "archive-items" && parts[2] && req.method === "DELETE") {
-    return deleteArchiveItem(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res);
+    return await deleteArchiveItem(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res);
   }
 
-  if (pathname === "/api/essays" && req.method === "POST") return json(res, 201, { essay: createEssay(user.id, await readBody(req)) });
+  if (pathname === "/api/essays" && req.method === "POST") return json(res, 201, { essay: await createEssay(user.id, await readBody(req)) });
   if (parts[1] === "essays" && parts[2] && req.method === "PATCH") {
-    const essay = updateEssay(user.id, parts[2], await readBody(req));
+    const essay = await updateEssay(user.id, parts[2], await readBody(req));
     return essay ? json(res, 200, { essay }) : notFound(res, "자기소개서");
   }
   if (parts[1] === "essays" && parts[2] && req.method === "DELETE") {
-    return deleteEssay(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "자기소개서");
+    return await deleteEssay(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "자기소개서");
   }
 
   if (parts[1] === "questions" && parts[2] && parts[3] === "context" && req.method === "PUT") {
     const body = await readBody(req);
-    const question = setQuestionExperiences(user.id, parts[2], Array.isArray(body.experienceIds) ? body.experienceIds : []);
+    const question = await setQuestionExperiences(user.id, parts[2], Array.isArray(body.experienceIds) ? body.experienceIds : []);
     return question ? json(res, 200, { question }) : notFound(res, "문항");
   }
   if (parts[1] === "questions" && parts[2] && req.method === "PATCH") {
-    const question = updateQuestion(user.id, parts[2], await readBody(req));
+    const question = await updateQuestion(user.id, parts[2], await readBody(req));
     return question ? json(res, 200, { question }) : notFound(res, "문항");
   }
   if (parts[1] === "essays" && parts[2] && parts[3] === "questions" && req.method === "POST") {
     try {
-      const question = createQuestion(user.id, parts[2], await readBody(req));
+      const question = await createQuestion(user.id, parts[2], await readBody(req));
       return question ? json(res, 201, { question }) : notFound(res, "자기소개서");
     } catch (error) {
       return json(res, 400, { error: error.message });
@@ -281,25 +484,47 @@ export async function handleApi(req, res, pathname) {
   }
   if (parts[1] === "questions" && parts[2] && req.method === "DELETE") {
     try {
-      return deleteQuestion(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "문항");
+      return await deleteQuestion(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "문항");
     } catch (error) {
       return json(res, 400, { error: error.message });
     }
   }
 
-  if (pathname === "/api/applications" && req.method === "POST") return json(res, 201, { application: createApplication(user.id, await readBody(req)) });
+  if (pathname === "/api/applications" && req.method === "POST") return json(res, 201, { application: await createApplication(user.id, await readBody(req)) });
   if (parts[1] === "applications" && parts[2] && req.method === "PATCH") {
-    const application = updateApplication(user.id, parts[2], await readBody(req));
+    const application = await updateApplication(user.id, parts[2], await readBody(req));
     return application ? json(res, 200, { application }) : notFound(res, "지원 항목");
   }
   if (parts[1] === "applications" && parts[2] && req.method === "DELETE") {
-    return deleteApplication(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "지원 항목");
+    return await deleteApplication(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "지원 항목");
+  }
+
+  if (pathname === "/api/llm/archive-experience" && req.method === "POST") {
+    if (!allowRequest(req)) return json(res, 429, { error: "잠시 후 다시 시도해 주세요." });
+    const body = await readBody(req);
+    try {
+      const result = await structureArchiveExperience(body.answers || {});
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 502, { error: error.name === "AbortError" ? "AI 응답 시간이 초과되었습니다." : "경험을 구조화하지 못했습니다." });
+    }
+  }
+
+  if (pathname === "/api/llm/archive-item-file" && req.method === "POST") {
+    if (!allowRequest(req)) return json(res, 429, { error: "잠시 후 다시 시도해 주세요." });
+    const body = await readBody(req);
+    try {
+      const result = await extractArchiveItemFromFile(body.file || {}, body.kind);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 502, { error: error.name === "AbortError" ? "AI 응답 시간이 초과되었습니다." : "첨부파일에서 정보를 읽지 못했습니다." });
+    }
   }
 
   if (pathname === "/api/llm/essay" && req.method === "POST") {
     if (!allowRequest(req)) return json(res, 429, { error: "잠시 후 다시 시도해 주세요." });
     const body = await readBody(req);
-    const context = getQuestionContext(user.id, body.questionId);
+    const context = await getQuestionContext(user.id, body.questionId);
     if (!context) return notFound(res, "문항");
     const payload = {
       mode: body.mode === "revise" ? "revise" : "generate",
@@ -322,7 +547,7 @@ export async function handleApi(req, res, pathname) {
     };
     try {
       const result = await callOpenAI(payload);
-      const question = saveGeneratedDraft(user.id, body.questionId, result.text);
+      const question = await saveGeneratedDraft(user.id, body.questionId, result.text);
       return json(res, 200, { ...result, question });
     } catch (error) {
       return json(res, 502, { error: error.name === "AbortError" ? "AI 응답 시간이 초과되었습니다." : "AI 문장을 생성하지 못했습니다." });

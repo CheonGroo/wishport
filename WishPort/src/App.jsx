@@ -75,13 +75,22 @@ function cn(...values) {
 }
 
 async function api(path, options = {}) {
-  const auth = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+  const auth = supabase
+    ? await supabase.auth.getSession()
+    : { data: { session: null } };
   const token = auth.data?.session?.access_token;
   const response = await fetch(path, {
     ...options,
     headers: options.body
-      ? { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
-      : { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
+      ? {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
+        }
+      : {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
+        },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok)
@@ -753,6 +762,26 @@ function ProfileEditor({ profile, section, onSave }) {
     setForm((current) => ({ ...current, [key]: value }));
     setDirty(true);
   };
+  const updateList = (key, index, field, value) => {
+    setForm((current) => ({
+      ...current,
+      [key]: (current[key] || []).map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    }));
+    setDirty(true);
+  };
+  const addListItem = (key, item) => {
+    setForm((current) => ({ ...current, [key]: [...(current[key] || []), item] }));
+    setDirty(true);
+  };
+  const removeListItem = (key, index) => {
+    setForm((current) => ({
+      ...current,
+      [key]: (current[key] || []).filter((_, itemIndex) => itemIndex !== index),
+    }));
+    setDirty(true);
+  };
   const configs = {
     personal: {
       eyebrow: "PERSONAL",
@@ -811,7 +840,7 @@ function ProfileEditor({ profile, section, onSave }) {
     <EditorCanvas
       eyebrow={config.eyebrow}
       title={config.title}
-      description={config.description}
+      description="먼저 질문에 답하듯 채우고, 필요한 값만 직접 보충하세요."
       actions={
         <Button
           variant="primary"
@@ -824,18 +853,113 @@ function ProfileEditor({ profile, section, onSave }) {
         </Button>
       }
     >
-      <div className="form-grid">
-        {config.fields.map(([key, label, textarea]) => (
-          <Field
-            key={key}
-            label={label}
-            textarea={textarea}
-            value={form[key]}
-            onChange={(value) => set(key, value)}
-          />
-        ))}
+      <div className="guided-input-banner">
+        <Sparkles size={17} />
+        <div>
+          <strong>{config.description}</strong>
+          <span>입력한 내용은 Resume overview와 자기소개서 소재 추천에 함께 사용됩니다.</span>
+        </div>
       </div>
+      {section === "education" ? (
+        <RepeatableProfileList
+          type="education"
+          items={form.educations || []}
+          onAdd={() =>
+            addListItem("educations", {
+              school: "",
+              major: "",
+              degree: "",
+              gpa: "",
+              startedAt: "",
+              endedAt: "",
+              description: "",
+            })
+          }
+          onRemove={(index) => removeListItem("educations", index)}
+          onChange={(index, field, value) =>
+            updateList("educations", index, field, value)
+          }
+        />
+      ) : section === "career" ? (
+        <RepeatableProfileList
+          type="career"
+          items={form.careers || []}
+          onAdd={() =>
+            addListItem("careers", {
+              company: "",
+              role: "",
+              startedAt: "",
+              endedAt: "",
+              summary: "",
+            })
+          }
+          onRemove={(index) => removeListItem("careers", index)}
+          onChange={(index, field, value) =>
+            updateList("careers", index, field, value)
+          }
+        />
+      ) : (
+        <div className={cn("form-grid", section === "personal" && "compact-form-grid")}>
+          {config.fields.map(([key, label, textarea]) => (
+            <Field
+              key={key}
+              label={label}
+              textarea={textarea}
+              value={form[key]}
+              onChange={(value) => set(key, value)}
+            />
+          ))}
+        </div>
+      )}
     </EditorCanvas>
+  );
+}
+
+function RepeatableProfileList({ type, items, onAdd, onRemove, onChange }) {
+  const isEducation = type === "education";
+  const emptyMessage = isEducation
+    ? "학교별 학력을 추가해 주세요."
+    : "회사별 경력을 추가해 주세요.";
+  return (
+    <div className="repeatable-profile-list">
+      {!items.length && <div className="empty-repeatable">{emptyMessage}</div>}
+      {items.map((item, index) => (
+        <div className="repeatable-card" key={item.id || index}>
+          <div className="repeatable-card-head">
+            <strong>{isEducation ? `학력 ${index + 1}` : `경력 ${index + 1}`}</strong>
+            <IconButton label="삭제" onClick={() => onRemove(index)}>
+              <Trash2 size={14} />
+            </IconButton>
+          </div>
+          <div className="form-grid compact-form-grid">
+            {isEducation ? (
+              <>
+                <Field label="학교명" value={item.school} onChange={(value) => onChange(index, "school", value)} />
+                <Field label="전공" value={item.major} onChange={(value) => onChange(index, "major", value)} />
+                <Field label="학위/상태" value={item.degree} onChange={(value) => onChange(index, "degree", value)} />
+                <Field label="학점" value={item.gpa} onChange={(value) => onChange(index, "gpa", value)} />
+              </>
+            ) : (
+              <>
+                <Field label="회사명" value={item.company} onChange={(value) => onChange(index, "company", value)} />
+                <Field label="직무/역할" value={item.role} onChange={(value) => onChange(index, "role", value)} />
+              </>
+            )}
+            <Field label={isEducation ? "입학" : "입사"} value={item.startedAt} onChange={(value) => onChange(index, "startedAt", value)} placeholder="YYYY.MM" />
+            <Field label={isEducation ? "졸업" : "퇴사"} value={item.endedAt} onChange={(value) => onChange(index, "endedAt", value)} placeholder="YYYY.MM" />
+            <Field
+              textarea
+              label={isEducation ? "설명" : "담당 업무"}
+              value={isEducation ? item.description : item.summary}
+              onChange={(value) => onChange(index, isEducation ? "description" : "summary", value)}
+            />
+          </div>
+        </div>
+      ))}
+      <Button icon={Plus} onClick={onAdd}>
+        {isEducation ? "학력 추가" : "경력 추가"}
+      </Button>
+    </div>
   );
 }
 
@@ -908,7 +1032,76 @@ function PhotoEditor({ profile, onSave, notify }) {
   );
 }
 
-function ExperienceEditor({ experience, onSave, isNew }) {
+const archiveInterviewQuestions = [
+  ["project", "어떤 프로젝트나 경험이었나요?", "예: 교내 회의실 예약 서비스 Erooming"],
+  ["context", "그때 어떤 상황이었나요?", "팀, 기간, 배경을 편하게 적어주세요."],
+  ["problem", "가장 어려웠던 문제는 뭐였나요?", "일정, 협업, 기술, 사용자 문제 등"],
+  ["action", "본인이 직접 한 행동은 뭐였나요?", "내가 판단하고 실행한 일을 중심으로"],
+  ["result", "결과나 배운 점은 무엇이었나요?", "수치가 없으면 변화나 깨달음도 좋아요."],
+];
+
+function ArchiveInterviewPanel({ onApply, notify }) {
+  const [answers, setAnswers] = useState(
+    Object.fromEntries(archiveInterviewQuestions.map(([key]) => [key, ""])),
+  );
+  const [busy, setBusy] = useState(false);
+  const hasAnswer = Object.values(answers).some((value) => value.trim());
+  const update = (key, value) =>
+    setAnswers((current) => ({ ...current, [key]: value }));
+  const generate = async () => {
+    if (!hasAnswer) return notify("경험에 대해 한 가지 이상 답변해 주세요.");
+    setBusy(true);
+    try {
+      const body = await api("/api/llm/archive-experience", {
+        method: "POST",
+        body: JSON.stringify({ answers }),
+      });
+      onApply(body.experience);
+      notify(
+        body.provider === "gemini"
+          ? "Gemini가 경험 초안을 정리했습니다."
+          : "경험 초안을 정리했습니다.",
+      );
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="archive-interview-panel">
+      <div className="archive-interview-head">
+        <div>
+          <span className="eyebrow">AI INTERVIEW</span>
+          <h3>질문으로 Archive 채우기</h3>
+        </div>
+        <Button
+          variant="primary"
+          icon={busy ? LoaderCircle : Sparkles}
+          className={busy ? "is-loading" : ""}
+          onClick={generate}
+          disabled={busy || !hasAnswer}
+        >
+          경험 구조화
+        </Button>
+      </div>
+      <div className="archive-interview-grid">
+        {archiveInterviewQuestions.map(([key, label, placeholder]) => (
+          <label className="archive-interview-question" key={key}>
+            <span>{label}</span>
+            <textarea
+              value={answers[key]}
+              placeholder={placeholder}
+              onChange={(event) => update(key, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExperienceEditor({ experience, onSave, isNew, notify }) {
   const [form, setForm] = useState(
     experience || {
       title: "",
@@ -976,6 +1169,17 @@ function ExperienceEditor({ experience, onSave, isNew }) {
         </Button>
       }
     >
+      <ArchiveInterviewPanel
+        notify={notify}
+        onApply={(experienceDraft) =>
+          setForm((current) => ({ ...current, ...experienceDraft }))
+        }
+      />
+      <div className="manual-supplement-head">
+        <span className="eyebrow">DIRECT EDIT</span>
+        <h3>직접 보충하기</h3>
+        <p>AI가 정리한 초안을 확인한 뒤, 사실관계와 표현을 직접 다듬으세요.</p>
+      </div>
       <div className="form-grid">
         <Field
           label="프로젝트명"
@@ -1052,10 +1256,18 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
       kind,
       title: "",
       detail: "",
+      issuer: "",
+      grade: "",
+      acquiredAt: "",
+      fileName: "",
+      fileType: "",
+      fileData: "",
+      ocrText: "",
       tone: kind === "asset" ? "lilac" : "mint",
     },
   );
   const [busy, setBusy] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
   useEffect(
     () =>
       setForm(
@@ -1063,6 +1275,13 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
           kind,
           title: "",
           detail: "",
+          issuer: "",
+          grade: "",
+          acquiredAt: "",
+          fileName: "",
+          fileType: "",
+          fileData: "",
+          ocrText: "",
           tone: kind === "asset" ? "lilac" : "mint",
         },
       ),
@@ -1076,17 +1295,42 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
       setBusy(false);
     }
   };
+  const readCertificate = (file) => {
+    if (!file) return;
+    if (file.size > 5_000_000) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const fileData = String(reader.result || "");
+      setForm((current) => ({
+        ...current,
+        fileName: file.name,
+        fileType: file.type,
+        fileData,
+      }));
+      setOcrBusy(true);
+      try {
+        const body = await api("/api/llm/archive-item-file", {
+          method: "POST",
+          body: JSON.stringify({
+            kind,
+            file: { name: file.name, type: file.type, data: fileData },
+          }),
+        });
+        setForm((current) => ({ ...current, ...body.item }));
+      } finally {
+        setOcrBusy(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+  const label = kind === "asset" ? "수상 경력 · 교육사항" : "어학성적 · 자격증";
   return (
     <EditorCanvas
-      eyebrow={kind === "asset" ? "ASSET" : "AWARD"}
+      eyebrow={kind === "asset" ? "AWARD · EDUCATION" : "LICENSE · LANGUAGE"}
       title={
-        isNew ? (kind === "asset" ? "새 Asset" : "새 성과 · 자격") : item.title
+        isNew ? `새 ${label}` : item.title
       }
-      description={
-        kind === "asset"
-          ? "스킬, 링크와 증빙 자료를 입력합니다."
-          : "수상, 자격과 발급 정보를 입력합니다."
-      }
+      description="증빙 파일을 올리면 AI가 주요 정보를 먼저 채우고, 사용자가 직접 보정합니다."
       actions={
         <Button
           variant="primary"
@@ -1099,15 +1343,50 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
         </Button>
       }
     >
-      <div className="form-grid">
+      <div className="file-ocr-dropzone">
+        <UploadCloud size={20} />
+        <div>
+          <strong>{ocrBusy ? "증빙을 읽는 중입니다" : "PDF 또는 이미지 첨부"}</strong>
+          <span>자격명, 등급, 기관, 취득일자를 자동으로 채웁니다.</span>
+          {form.fileName && <em>{form.fileName}</em>}
+        </div>
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,application/pdf"
+          onChange={(event) => readCertificate(event.target.files?.[0])}
+        />
+      </div>
+      <div className="form-grid compact-form-grid">
         <Field
-          label="항목명"
+          label={kind === "asset" ? "수상/교육명" : "자격명/시험명"}
           value={form.title}
           onChange={(value) =>
             setForm((current) => ({ ...current, title: value }))
           }
         />
         <Field
+          label="등급/점수"
+          value={form.grade}
+          onChange={(value) =>
+            setForm((current) => ({ ...current, grade: value }))
+          }
+        />
+        <Field
+          label="기관"
+          value={form.issuer}
+          onChange={(value) =>
+            setForm((current) => ({ ...current, issuer: value }))
+          }
+        />
+        <Field
+          label="취득/수료일"
+          value={form.acquiredAt}
+          onChange={(value) =>
+            setForm((current) => ({ ...current, acquiredAt: value }))
+          }
+        />
+        <Field
+          textarea
           label="세부 정보"
           value={form.detail}
           onChange={(value) =>
@@ -1131,6 +1410,110 @@ function EditorCanvas({ eyebrow, title, description, actions, children }) {
         {actions}
       </div>
       <div className="editor-canvas-body">{children}</div>
+    </section>
+  );
+}
+
+function ArchiveWorkspacePreview({ data, selection, onSelect, onNewExperience }) {
+  const profile = data.profile;
+  const selectedExperience = data.experiences.find(
+    (item) => item.id === selection.id,
+  );
+  const previewExperience = selectedExperience || data.experiences[0];
+  const achievements = data.archiveItems.filter(
+    (item) => item.kind === "achievement",
+  );
+  const assets = data.archiveItems.filter((item) => item.kind === "asset");
+  const nodes = previewExperience
+    ? [
+        ["S", "상황", previewExperience.star?.situation || previewExperience.summary],
+        ["T", "과제", previewExperience.star?.task || previewExperience.evidence],
+        ["A", "행동", previewExperience.star?.action || previewExperience.evidence],
+        ["R", "결과", previewExperience.star?.result || "결과를 보충해 주세요."],
+      ]
+    : [];
+  return (
+    <section className="archive-workspace-preview">
+      <div className="archive-preview-topbar">
+        <div>
+          <span className="eyebrow">LIVE ARCHIVE</span>
+          <h2>{profile.name || "내 이름"} Resume Workspace</h2>
+        </div>
+        <Button icon={Plus} variant="primary" onClick={onNewExperience}>
+          경험 추가
+        </Button>
+      </div>
+      <div className="archive-resume-card">
+        <div className="archive-resume-photo">
+          {profile.photoData ? <img src={profile.photoData} alt="" /> : <UserRound size={28} />}
+        </div>
+        <div className="archive-resume-intro">
+          <h3>{profile.name || "이름을 입력해 주세요"}</h3>
+          <p>{profile.role || "지원 직무와 한 줄 소개를 입력해 주세요"}</p>
+          <div>
+            {[profile.email, profile.phone, profile.location, profile.website]
+              .filter(Boolean)
+              .map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+          </div>
+        </div>
+      </div>
+      <div className="archive-mindmap-panel">
+        {!previewExperience && (
+          <div className="archive-mindmap-empty">
+            <strong>이곳에 경험이 나타나요</strong>
+            <span>오른쪽 질문에 답하면 구조화된 경험 카드가 만들어집니다.</span>
+          </div>
+        )}
+        {previewExperience && (
+          <div className="archive-mindmap">
+            <button
+              className={cn(
+                "mindmap-root",
+                selection.id === previewExperience.id && "active",
+              )}
+              onClick={() =>
+                onSelect({ type: "experience", id: previewExperience.id })
+              }
+            >
+              <strong>{previewExperience.title}</strong>
+              <span>{previewExperience.meta || "Experience"}</span>
+            </button>
+            <div className="mindmap-branches">
+              {nodes.map(([letter, title, copy]) => (
+                <button
+                  className="mindmap-node"
+                  key={letter}
+                  onClick={() =>
+                    onSelect({ type: "experience", id: previewExperience.id })
+                  }
+                >
+                  <b>{letter}</b>
+                  <div>
+                    <strong>{title}</strong>
+                    <span>{copy}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="archive-preview-bottom">
+        <div>
+          <span className="eyebrow">EXPERIENCES</span>
+          <strong>{data.experiences.length}</strong>
+        </div>
+        <div>
+          <span className="eyebrow">AWARDS</span>
+          <strong>{achievements.length}</strong>
+        </div>
+        <div>
+          <span className="eyebrow">ASSETS</span>
+          <strong>{assets.length}</strong>
+        </div>
+      </div>
     </section>
   );
 }
@@ -1206,6 +1589,7 @@ function ArchiveEditor({
         experience={selectedExperience}
         isNew={newExperience}
         onSave={saveExperience}
+        notify={notify}
       />
     );
   if (selection.type === "item" || newItemKind)
@@ -1243,6 +1627,14 @@ function ArchiveEditor({
           onNewItem={(kind) => setSelection({ type: "new-item", id: kind })}
           onDeleteExperience={removeExperience}
           onDeleteItem={removeItem}
+        />
+        <ArchiveWorkspacePreview
+          data={data}
+          selection={selection}
+          onSelect={setSelection}
+          onNewExperience={() =>
+            setSelection({ type: "new-experience", id: "new" })
+          }
         />
         {editor}
       </div>
@@ -2884,7 +3276,8 @@ export default function App() {
     demoAuthEnabled: true,
   });
   const [user, setUser] = useState(undefined);
-  const [authMessage, setAuthMessage] = useState("로그인 정보를 확인하는 중입니다.");
+  const [authMessage, setAuthMessage] =
+    useState("로그인 정보를 확인하는 중입니다.");
   const [data, setData] = useState(blankData);
   const [loadingData, setLoadingData] = useState(false);
   const [page, setPage] = useState(() => {
@@ -2909,11 +3302,7 @@ export default function App() {
   const enterContent = useCallback((nextUser, nextPage = "archive") => {
     setUser(nextUser);
     setPage(nextPage);
-    window.history.replaceState(
-      { page: nextPage },
-      "",
-      `/content#${nextPage}`,
-    );
+    window.history.replaceState({ page: nextPage }, "", `/content#${nextPage}`);
   }, []);
   const loadData = useCallback(
     async (silent = false) => {
@@ -2946,7 +3335,9 @@ export default function App() {
         if (supabase) {
           const isCallback = window.location.pathname === "/auth/callback";
           const params = new URLSearchParams(window.location.search);
-          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+          const hashParams = new URLSearchParams(
+            window.location.hash.replace(/^#/, ""),
+          );
           const callbackError =
             params.get("error_description") ||
             params.get("error") ||
@@ -2984,12 +3375,20 @@ export default function App() {
       }
     };
     loadAuth();
-    if (!supabase) return () => { active = false; };
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active && session?.user) enterContent(supabaseUser(session.user));
-      if (active && !session?.user) setUser(null);
-    });
-    return () => { active = false; listener.subscription.unsubscribe(); };
+    if (!supabase)
+      return () => {
+        active = false;
+      };
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (active && session?.user) enterContent(supabaseUser(session.user));
+        if (active && !session?.user) setUser(null);
+      },
+    );
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
   }, [enterContent, notify]);
   useEffect(() => {
     if (user) loadData();
@@ -3187,7 +3586,11 @@ export default function App() {
   if (!user)
     return (
       <>
-        <LandingPage config={config} onSignedIn={enterContent} notify={notify} />
+        <LandingPage
+          config={config}
+          onSignedIn={enterContent}
+          notify={notify}
+        />
         {toast && <div className="toast">{toast}</div>}
       </>
     );
@@ -3365,16 +3768,18 @@ export default function App() {
   const focused = ["archive-edit", "source", "design", "editor"].includes(page);
   return (
     <ContentPage
-      header={!focused && (
-        <AppHeader
-          page={appPage}
-          onNavigate={navigate}
-          user={user}
-          onLogout={logout}
-          mobileOpen={mobileOpen}
-          setMobileOpen={setMobileOpen}
-        />
-      )}
+      header={
+        !focused && (
+          <AppHeader
+            page={appPage}
+            onNavigate={navigate}
+            user={user}
+            onLogout={logout}
+            mobileOpen={mobileOpen}
+            setMobileOpen={setMobileOpen}
+          />
+        )
+      }
       toast={toast}
     >
       {content}
