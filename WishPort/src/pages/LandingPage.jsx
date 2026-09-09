@@ -26,7 +26,10 @@ export default function LandingPage({ config, onSignedIn, notify }) {
   const login = async () => {
     if (supabase) {
       const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/auth/callback` } });
-      if (error) notify(error.message);
+      if (error) {
+        const providerDisabled = /unsupported provider|provider is not enabled/i.test(error.message || "");
+        notify(providerDisabled ? "Supabase에서 Google 로그인을 활성화해 주세요. Authentication → Providers → Google" : error.message);
+      }
       return;
     }
     const response = await fetch("/api/auth/demo", { method: "POST" });

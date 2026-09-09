@@ -27,6 +27,28 @@ Archive에서 등록한 경험은 문항 설계 화면에 즉시 나타납니다
 
 ## Google 로그인
 
+### Supabase Google OAuth 설정
+
+`Unsupported provider: provider is not enabled` 오류가 나오면 Supabase에서 Google Provider가 아직 꺼져 있는 상태입니다.
+
+1. Supabase Dashboard → Authentication → Providers → Google을 엽니다.
+2. Google Cloud Console에서 OAuth Client ID와 Client Secret을 만든 뒤 입력하고 Enabled를 켭니다.
+3. Supabase Dashboard → Authentication → URL Configuration의 Redirect URLs에 아래 주소를 추가합니다.
+
+```text
+http://127.0.0.1:4173/auth/callback
+http://localhost:4173/auth/callback
+https://서비스도메인/auth/callback
+```
+
+Google Cloud Console의 Authorized redirect URI에는 Supabase가 제공하는 다음 주소를 등록합니다.
+
+```text
+https://프로젝트ID.supabase.co/auth/v1/callback
+```
+
+브라우저 앱은 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`를 사용하고, 서버는 `SUPABASE_SECRET_KEY`로 로그인 사용자의 프로필을 `user_profiles`에 동기화합니다. 테이블 생성 SQL은 `supabase/schema.sql`에 있습니다.
+
 Google Cloud Console에서 Web application OAuth Client ID를 만든 뒤 `.env`에 설정합니다.
 
 ```env
