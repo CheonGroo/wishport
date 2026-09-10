@@ -8,25 +8,34 @@ import { GoogleGenAI } from "@google/genai";
 import {
   createApplication,
   createArchiveItem,
+  createCustomQuestion,
   createEssay,
   createExperience,
+  createInterviewSet,
+  createInterviewWeakSpotArchiveItem,
   createQuestion,
   deleteApplication,
   deleteArchiveItem,
   deleteEssay,
   deleteExperience,
+  deleteInterviewQuestion,
+  deleteInterviewSet,
   deleteQuestion,
   ensureUserData,
   getBootstrap,
   getQuestionContext,
+  reorderInterviewSetQuestions,
   saveGeneratedDraft,
   setQuestionExperiences,
   updateApplication,
   updateArchiveItem,
   updateEssay,
   updateExperience,
+  updateInterviewAnswerAsset,
+  updateInterviewQuestionAnswer,
   updateProfile,
   updateQuestion,
+  upsertInterviewAnswerAsset,
 } from "./supabaseDb.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -326,6 +335,265 @@ JSON만 반환하세요.
   return { item: parseJsonObject(text), provider: "gemini" };
 }
 
+const interviewQuestionPrompt = ({ application = {}, essay = {}, experiences = [] }) => `
+당신은 Wish Port의 Interview 기능입니다. 목적은 많은 질문을 만드는 것이 아니라 기존 Answer Archive로 커버 가능한 질문과 부족한 질문을 분류하는 것입니다.
+
+지원 공고:
+- 회사: ${application.company || "미입력"}
+- 직무: ${application.role || "미입력"}
+- 상태: ${application.status || "미입력"}
+
+자기소개서:
+${(essay.questions || [])
+  .map((question, index) => `Q${index + 1}. ${question.prompt}\n초안: ${question.draft || "미작성"}`)
+  .join("\n\n") || "미작성"}
+
+Archive 경험:
+${experiences
+  .slice(0, 8)
+  .map(
+    (item) => `- ${item.title}: ${item.summary || item.evidence || ""}
+  STAR: ${item.star?.situation || ""} / ${item.star?.task || ""} / ${item.star?.action || ""} / ${item.star?.result || ""}`,
+  )
+  .join("\n") || "없음"}
+
+JSON만 반환하세요. 코드블록 금지.
+{
+  "questions": [
+    {
+      "questionText": "면접 질문",
+      "questionType": "COMMON|ARCHIVE|ESSAY|JOB|TECHNICAL|CHALLENGE|FOLLOW_UP",
+      "competencyId": "communication|collaboration|problem_solving|ownership|leadership|adaptability|technical_depth|job_understanding|motivation|responsibility|conflict_resolution|learning",
+      "questionClusterId": "self_intro|motivation|job_choice|strength|weakness|collaboration|conflict|responsibility|initiative|problem_solving|failure|challenge|adaptability|feedback|representative_project|job_competency|future_goal",
+      "sourceType": "COMMON|ARCHIVE|ESSAY|JOB|TECHNICAL|CHALLENGE|FOLLOW_UP",
+      "sourceId": "관련 id 또는 빈 문자열",
+      "difficulty": "standard",
+      "feedback": {
+        "missing": "보완이 필요한 정보",
+        "followupNeeded": true
+      }
+    }
+  ]
+}
+
+규칙:
+- 질문은 10~12개.
+- COMMON, ARCHIVE, ESSAY, JOB, TECHNICAL, CHALLENGE를 모두 최소 1개 포함.
+- Archive 기반 질문은 프로젝트명만 바꾸는 수준을 피하고 Material/Result/Skill/Weak 정보까지 검증.
+- 공격적인 압박 질문 대신 Challenge Mode 관점으로 작성.
+- 사용자가 말하지 않은 사실은 만들지 않음.
+`.trim();
+
+function mockInterviewQuestions({ application = {}, essay = {}, experiences = [] }) {
+  const first = experiences[0];
+  const second = experiences[1] || first;
+  return {
+    questions: [
+      {
+        questionText: "본인을 1분 안에 소개해주세요.",
+        questionType: "COMMON",
+        competencyId: "communication",
+        questionClusterId: "self_intro",
+        sourceType: "COMMON",
+        sourceId: "",
+        difficulty: "standard",
+        feedback: { missing: "핵심 메시지와 대표 경험 연결이 필요합니다.", followupNeeded: true },
+      },
+      {
+        questionText: `${application.company || "지원 기업"} ${application.role || "지원 직무"}에 지원한 이유를 설명해주세요.`,
+        questionType: "JOB",
+        competencyId: "motivation",
+        questionClusterId: "motivation",
+        sourceType: "JOB",
+        sourceId: application.id || "",
+        difficulty: "standard",
+        feedback: { missing: "회사/직무 이해와 개인 경험 연결을 보완해야 합니다.", followupNeeded: true },
+      },
+      {
+        questionText: `${first?.title || "대표 경험"}에서 가장 어려웠던 문제를 어떻게 해결했나요?`,
+        questionType: "ARCHIVE",
+        competencyId: "problem_solving",
+        questionClusterId: "problem_solving",
+        sourceType: "ARCHIVE",
+        sourceId: first?.id || "",
+        difficulty: "standard",
+        feedback: { missing: "행동의 판단 기준과 결과 기준을 더 구체화해야 합니다.", followupNeeded: true },
+      },
+      {
+        questionText: `${first?.title || "대표 경험"}의 성과가 본인의 기여라고 볼 수 있는 근거는 무엇인가요?`,
+        questionType: "CHALLENGE",
+        competencyId: "ownership",
+        questionClusterId: "responsibility",
+        sourceType: "ARCHIVE",
+        sourceId: first?.id || "",
+        difficulty: "standard",
+        feedback: { missing: "본인의 역할 범위와 의사결정 책임을 보완해야 합니다.", followupNeeded: true },
+      },
+      {
+        questionText: essay.questions?.[0]?.draft
+          ? "자기소개서에서 언급한 핵심 행동을 더 구체적으로 설명해주세요."
+          : "제출할 자기소개서 문항과 연결되는 답변 근거를 설명해주세요.",
+        questionType: "ESSAY",
+        competencyId: "communication",
+        questionClusterId: "representative_project",
+        sourceType: "ESSAY",
+        sourceId: essay.questions?.[0]?.id || essay.id || "",
+        difficulty: "standard",
+        feedback: { missing: "자소서 문장과 Archive 근거의 연결을 확인해야 합니다.", followupNeeded: true },
+      },
+      {
+        questionText: `${application.role || "지원 직무"}에서 필요한 핵심 역량을 본인의 경험과 연결해 설명해주세요.`,
+        questionType: "TECHNICAL",
+        competencyId: "technical_depth",
+        questionClusterId: "job_competency",
+        sourceType: "TECHNICAL",
+        sourceId: application.id || "",
+        difficulty: "standard",
+        feedback: { missing: "직무 기술/역량의 선택 이유가 부족합니다.", followupNeeded: true },
+      },
+      {
+        questionText: `${second?.title || "협업 경험"}에서 팀원과 의견이 달랐던 상황은 어떻게 정리했나요?`,
+        questionType: "ARCHIVE",
+        competencyId: "conflict_resolution",
+        questionClusterId: "conflict",
+        sourceType: "ARCHIVE",
+        sourceId: second?.id || "",
+        difficulty: "standard",
+        feedback: { missing: "상대방 반응과 합의 과정의 구체성이 필요합니다.", followupNeeded: true },
+      },
+    ],
+  };
+}
+
+async function generateInterviewQuestions(payload) {
+  const prompt = interviewQuestionPrompt(payload);
+  if (gemini) {
+    const text = await callGeminiText(prompt);
+    return { ...parseJsonObject(text), provider: "gemini" };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5-mini", input: prompt, max_output_tokens: 1600 }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenAI API ${response.status}`);
+      const result = await response.json();
+      const text = result.output_text || result.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
+      return { ...parseJsonObject(text), provider: "openai" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ...mockInterviewQuestions(payload), provider: "demo" };
+}
+
+const interviewCoachingPrompt = ({ questionText = "", answerText = "", history = [], experiences = [] }) => `
+당신은 베테랑 면접관이자 면접 코치입니다. 지원자가 방금 한 답변을 면접관 입장에서 냉정하지만 건설적으로 평가하세요.
+
+지금까지의 대화:
+${history
+  .map((item) => `${item.role === "interviewer" ? "면접관" : "지원자"}: ${item.text}`)
+  .join("\n") || "없음"}
+
+방금 지원자가 답변한 질문: ${questionText || "(대화 맥락 참고)"}
+지원자의 답변: ${answerText}
+
+참고할 Archive 경험:
+${experiences
+  .slice(0, 5)
+  .map((item) => `- ${item.title}: ${item.summary || item.evidence || ""}`)
+  .join("\n") || "없음"}
+
+JSON만 반환하세요. 코드블록 금지.
+{
+  "score": 0에서 100 사이 정수,
+  "summary": "면접관이 이 답변을 들었을 때 드는 전반적인 인상 한두 문장",
+  "strengths": ["잘한 점 1", "잘한 점 2"],
+  "improvements": ["보완하면 좋은 점 1", "보완하면 좋은 점 2"],
+  "emphasize": ["다음에 강조하면 좋은 포인트 1", "포인트 2"],
+  "modelAnswer": "같은 질문에 대한 AI의 모범 답변 예시 (2~4문장)",
+  "followups": ["면접관이 이어서 물어볼 만한 꼬리질문 1", "꼬리질문 2", "꼬리질문 3"]
+}
+
+규칙:
+- score는 구체성, 논리 구조(상황-행동-결과), 진정성을 기준으로 평가.
+- strengths/improvements/emphasize는 각각 1~3개.
+- followups는 정확히 2~3개, 실제 면접관이 물을 법한 자연스러운 질문.
+- 지원자가 말하지 않은 사실을 지어내지 않음.
+`.trim();
+
+function mockInterviewCoaching({ answerText = "" }) {
+  const length = answerText.trim().length;
+  const score = Math.max(35, Math.min(92, 40 + Math.round(length / 4)));
+  return {
+    score,
+    summary:
+      length > 80
+        ? "구체적인 상황과 행동이 잘 드러나 있어 설득력이 있습니다."
+        : "핵심 메시지는 전달되지만 구체적인 상황·행동·결과가 조금 더 필요합니다.",
+    strengths: ["답변의 핵심 메시지가 명확합니다.", "질문의 의도에 맞게 답변했습니다."],
+    improvements: [
+      length > 80
+        ? "수치나 결과를 한 가지만 더 넣으면 더 좋아집니다."
+        : "구체적인 상황(when/where)과 결과를 추가해 보세요.",
+    ],
+    emphasize: ["본인의 역할과 판단 기준을 강조해 보세요."],
+    modelAnswer: `${answerText.slice(0, 40) || "해당 경험"}을 바탕으로, 당시 상황과 제 역할, 구체적인 행동, 그리고 정량적인 결과를 순서대로 말씀드리면 더 설득력 있는 답변이 됩니다.`,
+    followups: [
+      "그 과정에서 가장 어려웠던 점은 무엇이었나요?",
+      "다시 같은 상황이 온다면 무엇을 다르게 하시겠어요?",
+      "그 결과를 팀 전체의 성과와 어떻게 연결 지을 수 있을까요?",
+    ],
+  };
+}
+
+function normalizeCoaching(raw = {}, answerText = "") {
+  const clampScore = Math.max(0, Math.min(100, Math.round(Number(raw.score) || 0)));
+  const asList = (value) =>
+    Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+  return {
+    score: clampScore || mockInterviewCoaching({ answerText }).score,
+    summary: String(raw.summary || "").trim() || "답변을 검토했습니다.",
+    strengths: asList(raw.strengths).slice(0, 3),
+    improvements: asList(raw.improvements).slice(0, 3),
+    emphasize: asList(raw.emphasize).slice(0, 3),
+    modelAnswer: String(raw.modelAnswer || "").trim(),
+    followups: asList(raw.followups).slice(0, 3),
+  };
+}
+
+async function generateInterviewCoaching(payload) {
+  const prompt = interviewCoachingPrompt(payload);
+  if (gemini) {
+    const text = await callGeminiText(prompt);
+    return { coaching: normalizeCoaching(parseJsonObject(text), payload.answerText), provider: "gemini" };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5-mini", input: prompt, max_output_tokens: 900 }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenAI API ${response.status}`);
+      const result = await response.json();
+      const text = result.output_text || result.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
+      return { coaching: normalizeCoaching(parseJsonObject(text), payload.answerText), provider: "openai" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { coaching: mockInterviewCoaching(payload), provider: "demo" };
+}
+
 async function callOpenAI(payload) {
   if (gemini) {
     const text = await callGeminiText(llmPrompt(payload));
@@ -345,7 +613,7 @@ async function callOpenAI(payload) {
     const result = await response.json();
     const text = result.output_text || result.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
     if (!text) throw new Error("LLM 응답에서 본문을 찾지 못했습니다.");
-    return { text, demo: false };
+    return { text, demo: false, provider: "openai" };
   } finally {
     clearTimeout(timer);
   }
@@ -391,6 +659,11 @@ export async function handleApi(req, res, pathname) {
       googleClientId: process.env.GOOGLE_CLIENT_ID || "",
       llmEnabled: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY),
       model: process.env.GEMINI_MODEL || process.env.OPENAI_MODEL || "gemini-3.6-flash",
+      llmProvider: process.env.GEMINI_API_KEY
+        ? "gemini"
+        : process.env.OPENAI_API_KEY
+          ? "openai"
+          : "demo",
       demoAuthEnabled,
     });
   }
@@ -497,6 +770,57 @@ export async function handleApi(req, res, pathname) {
   }
   if (parts[1] === "applications" && parts[2] && req.method === "DELETE") {
     return await deleteApplication(user.id, parts[2]) ? json(res, 200, { ok: true }) : notFound(res, "지원 항목");
+  }
+
+  if (pathname === "/api/interview/answer-assets" && req.method === "POST") {
+    return json(res, 201, { asset: await upsertInterviewAnswerAsset(user.id, await readBody(req)) });
+  }
+  if (parts[1] === "interview" && parts[2] === "answer-assets" && parts[3] && req.method === "PATCH") {
+    const asset = await updateInterviewAnswerAsset(user.id, parts[3], await readBody(req));
+    return asset ? json(res, 200, { asset }) : notFound(res, "면접 답변");
+  }
+  if (pathname === "/api/interview/sets" && req.method === "POST") {
+    return json(res, 201, { set: await createInterviewSet(user.id, await readBody(req)) });
+  }
+  if (parts[1] === "interview" && parts[2] === "sets" && parts[3] && req.method === "DELETE") {
+    return await deleteInterviewSet(user.id, parts[3]) ? json(res, 200, { ok: true }) : notFound(res, "Interview Set");
+  }
+  if (parts[1] === "interview" && parts[2] === "sets" && parts[3] && parts[4] === "reorder" && req.method === "PUT") {
+    const body = await readBody(req);
+    await reorderInterviewSetQuestions(user.id, parts[3], Array.isArray(body.questionIds) ? body.questionIds : []);
+    return json(res, 200, { ok: true });
+  }
+  if (pathname === "/api/interview/questions" && req.method === "POST") {
+    return json(res, 201, { question: await createCustomQuestion(user.id, await readBody(req)) });
+  }
+  if (parts[1] === "interview" && parts[2] === "questions" && parts[3] && req.method === "PATCH") {
+    const question = await updateInterviewQuestionAnswer(user.id, parts[3], await readBody(req));
+    return question ? json(res, 200, { question }) : notFound(res, "면접 질문");
+  }
+  if (parts[1] === "interview" && parts[2] === "questions" && parts[3] && req.method === "DELETE") {
+    return await deleteInterviewQuestion(user.id, parts[3]) ? json(res, 200, { ok: true }) : notFound(res, "면접 질문");
+  }
+  if (parts[1] === "interview" && parts[2] === "weak-spots" && parts[3] && parts[4] === "archive-item" && req.method === "POST") {
+    const item = await createInterviewWeakSpotArchiveItem(user.id, parts[3]);
+    return item ? json(res, 201, { item }) : notFound(res, "면접 Weak Spot");
+  }
+
+  if (pathname === "/api/llm/interview-questions" && req.method === "POST") {
+    if (!allowRequest(req)) return json(res, 429, { error: "잠시 후 다시 시도해 주세요." });
+    try {
+      return json(res, 200, await generateInterviewQuestions(await readBody(req)));
+    } catch (error) {
+      return json(res, 502, { error: error.name === "AbortError" ? "AI 응답 시간이 초과되었습니다." : "면접 질문을 생성하지 못했습니다." });
+    }
+  }
+
+  if (pathname === "/api/llm/interview-coaching" && req.method === "POST") {
+    if (!allowRequest(req)) return json(res, 429, { error: "잠시 후 다시 시도해 주세요." });
+    try {
+      return json(res, 200, await generateInterviewCoaching(await readBody(req)));
+    } catch (error) {
+      return json(res, 502, { error: error.name === "AbortError" ? "AI 응답 시간이 초과되었습니다." : "AI 코칭을 생성하지 못했습니다." });
+    }
   }
 
   if (pathname === "/api/llm/archive-experience" && req.method === "POST") {

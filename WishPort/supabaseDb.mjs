@@ -59,6 +59,26 @@ const defaultQuestions = [
   ["직무 역량을 키우기 위해 노력한 경험을 작성해 주세요.", "직무역량"],
 ];
 
+export const interviewCoreClusters = [
+  ["self_intro", "자기소개", "Core", "communication"],
+  ["motivation", "지원동기", "Core", "motivation"],
+  ["job_choice", "직무 선택 이유", "Core", "job_understanding"],
+  ["strength", "강점", "Core", "ownership"],
+  ["weakness", "약점", "Core", "learning"],
+  ["collaboration", "협업", "Behavioral", "collaboration"],
+  ["conflict", "갈등", "Behavioral", "conflict_resolution"],
+  ["responsibility", "책임감", "Behavioral", "responsibility"],
+  ["initiative", "주도성", "Behavioral", "leadership"],
+  ["problem_solving", "문제해결", "Behavioral", "problem_solving"],
+  ["failure", "실패", "Behavioral", "learning"],
+  ["challenge", "도전", "Behavioral", "adaptability"],
+  ["adaptability", "변화 대응", "Behavioral", "adaptability"],
+  ["feedback", "피드백 수용", "Behavioral", "learning"],
+  ["representative_project", "대표 프로젝트", "Experience", "ownership"],
+  ["job_competency", "직무 역량", "Job Knowledge", "technical_depth"],
+  ["future_goal", "입사 후 목표", "Job Knowledge", "motivation"],
+].map(([id, label, group, competency]) => ({ id, label, group, competency }));
+
 const mapProfile = (row) => ({
   name: row.display_name || "",
   role: row.role || "",
@@ -155,11 +175,102 @@ const mapApplication = (row) => ({
   id: row.id,
   company: row.company,
   role: row.role,
+  jobTitle: row.job_title || "",
   submittedAt: row.submitted_at,
   status: row.status,
   essayId: row.essay_id,
+  interviewSetId: row.interview_set_id || "",
   updatedAt: row.updated_at,
   essayStatus: row.essays?.status,
+});
+
+const mapInterviewAsset = (row) => ({
+  id: row.id,
+  questionClusterId: row.question_cluster_id,
+  clusterLabel: row.cluster_label,
+  representativeExperienceId: row.representative_experience_id || "",
+  coreMessage: row.core_message || "",
+  talkingPoints: row.talking_points || {},
+  fullAnswer: row.full_answer || "",
+  followupQuestions: Array.isArray(row.followup_questions)
+    ? row.followup_questions
+    : [],
+  archiveGrounding: row.archive_grounding || {},
+  weakSpots: Array.isArray(row.weak_spots) ? row.weak_spots : [],
+  readiness: row.readiness || "missing",
+  updatedAt: row.updated_at,
+});
+
+// interview_sessions rows double as "Interview Set" records — a named, optionally
+// essay/application-linked collection of Q&A questions.
+const mapInterviewSession = (row, questions = []) => ({
+  id: row.id,
+  applicationId: row.application_id || "",
+  essayId: row.essay_id || "",
+  name: row.name || "",
+  company: row.company || "",
+  role: row.role || "",
+  sourceType: row.source_type || "manual",
+  questionCategory: row.question_category || "",
+  jdProvided: Boolean(row.jd_provided),
+  jdText: row.jd_text || "",
+  mode: row.mode,
+  difficulty: row.difficulty,
+  questionCount: row.question_count,
+  followupDepth: row.followup_depth,
+  status: row.status,
+  readyCount: questions.filter((question) => question.status === "ready").length,
+  readiness: questions.length
+    ? Math.round(
+        (questions.filter((question) => question.status === "ready").length /
+          questions.length) *
+          100,
+      )
+    : row.readiness || 0,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  questions: questions.slice().sort((a, b) => a.position - b.position),
+});
+
+function questionStatusFromAnswer(answerText = "") {
+  const trimmed = clean(answerText);
+  if (!trimmed) return "missing";
+  return trimmed.length >= 120 ? "ready" : "need_refinement";
+}
+
+const mapInterviewQuestion = (row) => ({
+  id: row.id,
+  sessionId: row.session_id || "",
+  applicationId: row.application_id || "",
+  questionType: row.question_type,
+  competencyId: row.competency_id,
+  questionClusterId: row.question_cluster_id,
+  sourceType: row.source_type,
+  sourceId: row.source_id,
+  questionText: row.question_text,
+  difficulty: row.difficulty,
+  parentQuestionId: row.parent_question_id || "",
+  matchedAnswerAssetId: row.matched_answer_asset_id || "",
+  answerText: row.answer_text || "",
+  followupText: row.followup_text || "",
+  position: row.position ?? 0,
+  status: questionStatusFromAnswer(row.answer_text),
+  feedback: row.feedback || {},
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapInterviewWeakSpot = (row) => ({
+  id: row.id,
+  applicationId: row.application_id || "",
+  sourceType: row.source_type,
+  sourceId: row.source_id,
+  description: row.description,
+  severity: row.severity,
+  resolvedAt: row.resolved_at || "",
+  archiveUpdateNeeded: Boolean(row.archive_update_needed),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
 });
 
 function mapEssay(row, questions = []) {
@@ -327,7 +438,15 @@ export async function getBootstrap(user) {
       "지원 현황",
     )
   ).map(mapApplication);
-  return { profile: { ...mapProfile(profileRow), educations, careers }, experiences, archiveItems, essays, applications };
+  const interview = await getInterviewBootstrap(userId);
+  return {
+    profile: { ...mapProfile(profileRow), educations, careers },
+    experiences,
+    archiveItems,
+    essays,
+    applications,
+    interview,
+  };
 }
 
 async function replaceEducationEntries(userId, entries = []) {
@@ -963,15 +1082,33 @@ export async function saveGeneratedDraft(userId, questionId, text) {
 
 export async function createApplication(userId, payload) {
   const stamp = now();
+  let company = clean(payload.company);
+  let role = clean(payload.role);
+  const essayId = clean(payload.essayId);
+  if (essayId && (!company || !role)) {
+    const essay = await one(
+      supabaseAdmin
+        .from("essays")
+        .select("company, role")
+        .eq("id", essayId)
+        .eq("user_id", userId)
+        .maybeSingle(),
+      "자기소개서",
+    );
+    company = company || essay?.company || "";
+    role = role || essay?.role || "";
+  }
   const row = await one(
     supabaseAdmin
       .from("applications")
       .insert({
         user_id: userId,
-        company: clean(payload.company) || "새 지원",
-        role: clean(payload.role) || "직무 미정",
+        company: company || "새 지원",
+        role: role || "직무 미정",
+        job_title: clean(payload.jobTitle),
         submitted_at: String(payload.submittedAt || ""),
         status: String(payload.status || "지원 예정"),
+        essay_id: essayId || null,
         updated_at: stamp,
       })
       .select()
@@ -998,8 +1135,11 @@ export async function updateApplication(userId, id, patch) {
       .update({
         company: clean(patch.company ?? current.company),
         role: clean(patch.role ?? current.role),
+        job_title: clean(patch.jobTitle ?? current.job_title),
         submitted_at: String(patch.submittedAt ?? current.submitted_at),
         status: String(patch.status ?? current.status),
+        essay_id: clean(patch.essayId ?? current.essay_id) || null,
+        interview_set_id: clean(patch.interviewSetId ?? current.interview_set_id) || null,
         updated_at: now(),
       })
       .eq("id", id)
@@ -1021,4 +1161,503 @@ export async function deleteApplication(userId, id) {
     "지원 현황",
   );
   return true;
+}
+
+export async function getInterviewBootstrap(userId) {
+  const assetRows = await many(
+    supabaseAdmin
+      .from("interview_answer_assets")
+      .select("*")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false }),
+    "면접 답변 아카이브",
+  );
+  const questionRows = await many(
+    supabaseAdmin
+      .from("interview_questions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(80),
+    "면접 질문",
+  );
+  const sessionRows = await many(
+    supabaseAdmin
+      .from("interview_sessions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(40),
+    "Interview Set",
+  );
+  const weakRows = await many(
+    supabaseAdmin
+      .from("interview_weak_spots")
+      .select("*")
+      .eq("user_id", userId)
+      .is("resolved_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(40),
+    "면접 Weak Spot",
+  );
+  const questions = questionRows.map(mapInterviewQuestion);
+  return {
+    clusters: interviewCoreClusters,
+    answerAssets: assetRows.map(mapInterviewAsset),
+    sets: sessionRows.map((session) =>
+      mapInterviewSession(
+        session,
+        questions.filter((question) => question.sessionId === session.id),
+      ),
+    ),
+    questions,
+    weakSpots: weakRows.map(mapInterviewWeakSpot),
+  };
+}
+
+function answerStatusFromAsset(asset) {
+  const hasCore = Boolean(clean(asset.coreMessage));
+  const hasFull = Boolean(clean(asset.fullAnswer));
+  const points = asset.talkingPoints || {};
+  const pointCount = Object.values(points).filter((value) => clean(value)).length;
+  if (hasCore && hasFull && pointCount >= 3) return "ready";
+  if (hasCore || hasFull || pointCount > 0) return "need_refinement";
+  return "missing";
+}
+
+export async function upsertInterviewAnswerAsset(userId, payload = {}) {
+  const cluster =
+    interviewCoreClusters.find((item) => item.id === payload.questionClusterId) ||
+    interviewCoreClusters[0];
+  const row = await one(
+    supabaseAdmin
+      .from("interview_answer_assets")
+      .upsert(
+        {
+          user_id: userId,
+          question_cluster_id: clean(payload.questionClusterId) || cluster.id,
+          cluster_label: clean(payload.clusterLabel) || cluster.label,
+          representative_experience_id:
+            clean(payload.representativeExperienceId) || null,
+          core_message: clean(payload.coreMessage),
+          talking_points: payload.talkingPoints || {},
+          full_answer: clean(payload.fullAnswer),
+          followup_questions: Array.isArray(payload.followupQuestions)
+            ? payload.followupQuestions
+            : [],
+          archive_grounding: payload.archiveGrounding || {},
+          weak_spots: Array.isArray(payload.weakSpots) ? payload.weakSpots : [],
+          readiness: answerStatusFromAsset(payload),
+          updated_at: now(),
+        },
+        { onConflict: "user_id,question_cluster_id", ignoreDuplicates: false },
+      )
+      .select()
+      .single(),
+    "면접 답변",
+  );
+  return mapInterviewAsset(row);
+}
+
+export async function updateInterviewAnswerAsset(userId, id, patch = {}) {
+  const current = await one(
+    supabaseAdmin
+      .from("interview_answer_assets")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    "면접 답변",
+  );
+  if (!current) return null;
+  const next = {
+    questionClusterId: patch.questionClusterId ?? current.question_cluster_id,
+    clusterLabel: patch.clusterLabel ?? current.cluster_label,
+    representativeExperienceId:
+      patch.representativeExperienceId ?? current.representative_experience_id,
+    coreMessage: patch.coreMessage ?? current.core_message,
+    talkingPoints: patch.talkingPoints ?? current.talking_points,
+    fullAnswer: patch.fullAnswer ?? current.full_answer,
+    followupQuestions: patch.followupQuestions ?? current.followup_questions,
+    archiveGrounding: patch.archiveGrounding ?? current.archive_grounding,
+    weakSpots: patch.weakSpots ?? current.weak_spots,
+  };
+  const row = await one(
+    supabaseAdmin
+      .from("interview_answer_assets")
+      .update({
+        representative_experience_id: clean(next.representativeExperienceId) || null,
+        core_message: clean(next.coreMessage),
+        talking_points: next.talkingPoints || {},
+        full_answer: clean(next.fullAnswer),
+        followup_questions: Array.isArray(next.followupQuestions)
+          ? next.followupQuestions
+          : [],
+        archive_grounding: next.archiveGrounding || {},
+        weak_spots: Array.isArray(next.weakSpots) ? next.weakSpots : [],
+        readiness: answerStatusFromAsset(next),
+        updated_at: now(),
+      })
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select()
+      .single(),
+    "면접 답변",
+  );
+  return mapInterviewAsset(row);
+}
+
+// Creates an Interview Set (an interview_sessions row + its interview_questions).
+// Two creation paths, both supported here:
+//   A. Essay-based  — payload.essayId (and/or applicationId) is set; questions are
+//      generated from the essay + JD + Archive experiences.
+//   B. Standalone    — no essay/application; user supplies name/company/role/
+//      questionCategory/jdText directly, questions are generated from experiences
+//      plus the supplied company/role context (or fall back to generic prompts).
+export async function createInterviewSet(userId, payload = {}) {
+  const applicationId = clean(payload.applicationId);
+  const application = applicationId
+    ? await one(
+        supabaseAdmin
+          .from("applications")
+          .select("*")
+          .eq("id", applicationId)
+          .eq("user_id", userId)
+          .maybeSingle(),
+        "지원 공고",
+      )
+    : null;
+  let essayId = clean(payload.essayId);
+  let essayRow = null;
+  if (!essayId && application?.essay_id) essayId = application.essay_id;
+  if (essayId) {
+    essayRow = await one(
+      supabaseAdmin
+        .from("essays")
+        .select("id, company, role")
+        .eq("id", essayId)
+        .eq("user_id", userId)
+        .maybeSingle(),
+      "자기소개서",
+    );
+    if (!essayRow) essayId = "";
+  }
+  const sourceType = essayId ? "essay" : "manual";
+  const company = clean(payload.company) || application?.company || essayRow?.company || "";
+  const role = clean(payload.role) || application?.role || essayRow?.role || "";
+  const name =
+    clean(payload.name) ||
+    (company ? `${company}${role ? " · " + role : ""} Interview Set` : "새 Interview Set");
+  const assets = (
+    await many(
+      supabaseAdmin
+        .from("interview_answer_assets")
+        .select("*")
+        .eq("user_id", userId),
+      "면접 답변",
+    )
+  ).map(mapInterviewAsset);
+  const pseudoApplication = application || (company || role ? { id: "", company, role } : null);
+  const rows = buildInterviewQuestions({
+    application: pseudoApplication,
+    essay: payload.essay,
+    experiences: Array.isArray(payload.experiences) ? payload.experiences : [],
+    assets,
+    requested: Array.isArray(payload.questions) ? payload.questions : [],
+  });
+  const stamp = now();
+  const session = await one(
+    supabaseAdmin
+      .from("interview_sessions")
+      .insert({
+        user_id: userId,
+        application_id: application?.id || null,
+        essay_id: essayId || null,
+        name,
+        company,
+        role,
+        source_type: sourceType,
+        question_category: clean(payload.questionCategory),
+        jd_provided: Boolean(payload.jdProvided),
+        jd_text: clean(payload.jdText),
+        mode: sourceType === "essay" ? "essay_based" : "manual",
+        difficulty: "standard",
+        question_count: rows.length,
+        followup_depth: 2,
+        status: "in_progress",
+        readiness: 0,
+        created_at: stamp,
+        updated_at: stamp,
+      })
+      .select()
+      .single(),
+    "Interview Set",
+  );
+  const insertedQuestions = rows.length
+    ? await many(
+        supabaseAdmin
+          .from("interview_questions")
+          .insert(
+            rows.map((row, index) => ({
+              user_id: userId,
+              session_id: session.id,
+              application_id: application?.id || null,
+              question_type: row.questionType,
+              competency_id: row.competencyId,
+              question_cluster_id: row.questionClusterId,
+              source_type: row.sourceType,
+              source_id: row.sourceId,
+              question_text: row.questionText,
+              difficulty: row.difficulty,
+              status: "missing",
+              answer_text: "",
+              followup_text: "",
+              position: index,
+              feedback: row.feedback || {},
+              created_at: stamp,
+              updated_at: stamp,
+            })),
+          )
+          .select(),
+        "면접 질문",
+      )
+    : [];
+  return mapInterviewSession(session, insertedQuestions.map(mapInterviewQuestion));
+}
+
+export async function updateInterviewQuestionAnswer(userId, id, patch = {}) {
+  const current = await one(
+    supabaseAdmin
+      .from("interview_questions")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    "면접 질문",
+  );
+  if (!current) return null;
+  const row = await one(
+    supabaseAdmin
+      .from("interview_questions")
+      .update({
+        answer_text: clean(patch.answerText ?? current.answer_text),
+        followup_text: clean(patch.followupText ?? current.followup_text),
+        updated_at: now(),
+      })
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select()
+      .single(),
+    "면접 질문",
+  );
+  return mapInterviewQuestion(row);
+}
+
+// A standalone question the user writes themselves (not generated for any
+// Interview Set) — filed straight into Cabinet under its cluster/category.
+export async function createCustomQuestion(userId, payload = {}) {
+  const cluster =
+    interviewCoreClusters.find((item) => item.id === payload.questionClusterId) ||
+    interviewCoreClusters[0];
+  const stamp = now();
+  const row = await one(
+    supabaseAdmin
+      .from("interview_questions")
+      .insert({
+        user_id: userId,
+        session_id: null,
+        application_id: null,
+        question_type: "CUSTOM",
+        competency_id: cluster.competency || "",
+        question_cluster_id: cluster.id,
+        source_type: "CUSTOM",
+        source_id: "",
+        question_text: clean(payload.questionText) || cluster.label,
+        difficulty: "standard",
+        status: "missing",
+        answer_text: clean(payload.answerText),
+        followup_text: clean(payload.followupText),
+        feedback: {},
+        created_at: stamp,
+        updated_at: stamp,
+      })
+      .select()
+      .single(),
+    "면접 질문",
+  );
+  return mapInterviewQuestion(row);
+}
+
+// Deletes one question — a standalone Cabinet question or a single question
+// out of an Interview Set (the Set itself, and its other questions, stay put).
+export async function deleteInterviewQuestion(userId, id) {
+  await changed(
+    supabaseAdmin
+      .from("interview_questions")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId),
+    "면접 질문",
+  );
+  return true;
+}
+
+// Persists a new question order within one Interview Set (drag/reorder in the UI).
+export async function reorderInterviewSetQuestions(userId, setId, questionIds = []) {
+  const rows = await many(
+    supabaseAdmin
+      .from("interview_questions")
+      .select("id")
+      .eq("session_id", setId)
+      .eq("user_id", userId),
+    "면접 질문",
+  );
+  const validIds = new Set(rows.map((row) => row.id));
+  const ordered = questionIds.filter((id) => validIds.has(id));
+  await Promise.all(
+    ordered.map((id, index) =>
+      changed(
+        supabaseAdmin
+          .from("interview_questions")
+          .update({ position: index, updated_at: now() })
+          .eq("id", id)
+          .eq("user_id", userId),
+        "면접 질문",
+      ),
+    ),
+  );
+  return true;
+}
+
+export async function deleteInterviewSet(userId, id) {
+  await changed(
+    supabaseAdmin
+      .from("interview_sessions")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId),
+    "Interview Set",
+  );
+  return true;
+}
+
+function buildInterviewQuestions({ application, experiences, assets, requested }) {
+  if (requested.length) {
+    return requested.map((question, index) =>
+      normalizeInterviewQuestion(question, assets, application, index),
+    );
+  }
+  const fallbackExperiences = experiences.slice(0, 4);
+  const base = [
+    {
+      questionType: "COMMON",
+      competencyId: "communication",
+      questionClusterId: "self_intro",
+      sourceType: "COMMON",
+      questionText: "본인을 1분 안에 소개해주세요.",
+    },
+    {
+      questionType: "COMMON",
+      competencyId: "motivation",
+      questionClusterId: "motivation",
+      sourceType: application ? "JOB" : "COMMON",
+      sourceId: application?.id || "",
+      questionText: application
+        ? `${application.company} ${application.role}에 지원한 이유를 설명해주세요.`
+        : "지원동기와 직무 선택 이유를 설명해주세요.",
+    },
+    ...fallbackExperiences.flatMap((experience) => [
+      {
+        questionType: "ARCHIVE",
+        competencyId: "problem_solving",
+        questionClusterId: "problem_solving",
+        sourceType: "ARCHIVE",
+        sourceId: experience.id,
+        questionText: `${experience.title}에서 가장 어려웠던 문제와 해결 과정을 설명해주세요.`,
+        feedback: {
+          missing: experience.star?.result
+            ? "배운 점과 이후 개선 방향을 보완하면 답변 완성도가 올라갑니다."
+            : "결과와 배운 점이 부족합니다. Archive 보완이 필요합니다.",
+        },
+      },
+      {
+        questionType: "CHALLENGE",
+        competencyId: "ownership",
+        questionClusterId: "responsibility",
+        sourceType: "ARCHIVE",
+        sourceId: experience.id,
+        questionText: `${experience.title}의 결과가 본인의 기여라고 볼 수 있는 근거는 무엇인가요?`,
+        feedback: {
+          missing: "본인의 역할 범위와 판단 기준을 더 구체화해야 합니다.",
+        },
+      },
+    ]),
+    {
+      questionType: "TECHNICAL",
+      competencyId: "technical_depth",
+      questionClusterId: "job_competency",
+      sourceType: "JOB",
+      sourceId: application?.id || "",
+      questionText: `${application?.role || "지원 직무"}에서 가장 중요하다고 생각하는 기술/역량을 본인 경험과 연결해 설명해주세요.`,
+    },
+  ].slice(0, 12);
+  return base.map((question, index) =>
+    normalizeInterviewQuestion(question, assets, application, index),
+  );
+}
+
+function normalizeInterviewQuestion(question, assets, application, index = 0) {
+  const clusterId =
+    clean(question.questionClusterId || question.question_cluster_id) ||
+    interviewCoreClusters[index % interviewCoreClusters.length].id;
+  const cluster = interviewCoreClusters.find((item) => item.id === clusterId);
+  const asset = assets.find((item) => item.questionClusterId === clusterId);
+  return {
+    questionType: clean(question.questionType || question.question_type) || "COMMON",
+    competencyId:
+      clean(question.competencyId || question.competency_id) ||
+      cluster?.competency ||
+      "communication",
+    questionClusterId: clusterId,
+    sourceType: clean(question.sourceType || question.source_type) || "COMMON",
+    sourceId: clean(question.sourceId || question.source_id || application?.id),
+    questionText: clean(question.questionText || question.question_text) || cluster?.label || "면접 질문",
+    difficulty: clean(question.difficulty) || "standard",
+    matchedAnswerAssetId: asset?.id || "",
+    status: asset?.readiness === "ready" ? "ready" : asset ? "need_refinement" : "missing",
+    feedback: question.feedback || {
+      completeness: asset?.readiness === "ready" ? 86 : asset ? 58 : 18,
+      grounding: asset?.representativeExperienceId ? 80 : 30,
+      specificity: asset?.fullAnswer ? 78 : 35,
+      followupNeeded: asset?.readiness !== "ready",
+    },
+  };
+}
+
+export async function createInterviewWeakSpotArchiveItem(userId, id) {
+  const weak = await one(
+    supabaseAdmin
+      .from("interview_weak_spots")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    "면접 Weak Spot",
+  );
+  if (!weak) return null;
+  const item = await createArchiveItem(userId, {
+    kind: "achievement",
+    title: "면접 보완 소재",
+    detail: weak.description,
+    tone: "lemon",
+  });
+  await changed(
+    supabaseAdmin
+      .from("interview_weak_spots")
+      .update({ resolved_at: now(), updated_at: now() })
+      .eq("id", id)
+      .eq("user_id", userId),
+    "면접 Weak Spot",
+  );
+  return item;
 }

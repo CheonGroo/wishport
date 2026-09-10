@@ -3,11 +3,14 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
+  DoorOpen,
   BookOpen,
   BriefcaseBusiness,
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleUserRound,
   Cloud,
   Download,
@@ -24,6 +27,7 @@ import {
   LogOut,
   Menu,
   MessageSquareText,
+  Mic,
   Plus,
   Printer,
   RefreshCw,
@@ -67,6 +71,13 @@ const blankData = {
   archiveItems: [],
   essays: [],
   applications: [],
+  interview: {
+    clusters: [],
+    answerAssets: [],
+    sets: [],
+    questions: [],
+    weakSpots: [],
+  },
 };
 const blankStar = { situation: "", task: "", action: "", result: "" };
 
@@ -177,6 +188,33 @@ function Field({ label, value, onChange, textarea, ...props }) {
   );
 }
 
+// Read-only / editable right-side panel — replaces gray-dim modal overlays app-wide.
+// Main content stays visible behind it (no dark backdrop); closes via the X button
+// or a click outside the panel.
+function SidePanel({ open, onClose, eyebrow, title, children, footer, wide }) {
+  if (!open) return null;
+  return (
+    <div
+      className="side-panel-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <aside className={cn("side-panel", wide && "side-panel-wide")}>
+        <div className="side-panel-head">
+          <div>
+            {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+            <h2>{title}</h2>
+          </div>
+          <IconButton label="닫기" onClick={onClose}>
+            <X size={18} />
+          </IconButton>
+        </div>
+        <div className="side-panel-body">{children}</div>
+        {footer && <div className="side-panel-footer">{footer}</div>}
+      </aside>
+    </div>
+  );
+}
+
 function AppHeader({
   page,
   onNavigate,
@@ -187,8 +225,9 @@ function AppHeader({
 }) {
   const nav = [
     ["archive", "Archive", LayoutDashboard],
-    ["writing", "Writing House", FilePenLine],
-    ["tracking", "State Tracking", Target],
+    ["writing", "Writing", FilePenLine],
+    ["interview", "Interview", Mic],
+    ["tracking", "State", Target],
   ];
   return (
     <header className="app-header no-print">
@@ -255,7 +294,7 @@ function FocusHeader({
     <header className="focus-header">
       <div className="focus-side focus-left">
         <IconButton
-          label="Writing House 홈"
+          label="Writing 홈"
           className="cloud-home"
           onClick={() => {
             window.dispatchEvent(new Event("wishport:flush"));
@@ -489,6 +528,39 @@ function ArchiveOverview({ data, onEdit }) {
     (item) => item.kind === "achievement",
   );
   const assets = archiveItems.filter((item) => item.kind === "asset");
+  const educations =
+    profile.educations?.length
+      ? profile.educations
+      : profile.school || profile.major || profile.educationPeriod
+        ? [
+            {
+              school: profile.school,
+              major: profile.major,
+              gpa: profile.gpa,
+              startedAt: profile.educationPeriod,
+              endedAt: "",
+              description: "",
+            },
+          ]
+        : [];
+  const careers =
+    profile.careers?.length
+      ? profile.careers
+      : profile.careerTitle || profile.careerSummary || profile.careerPeriod
+        ? [
+            {
+              company: profile.careerTitle,
+              role: "",
+              startedAt: profile.careerPeriod,
+              endedAt: "",
+              summary: profile.careerSummary,
+            },
+          ]
+        : [];
+  const dateRange = (startedAt, endedAt) =>
+    [startedAt, endedAt].filter(Boolean).join(" - ");
+  const itemMeta = (item) =>
+    [item.grade, item.issuer, item.acquiredAt].filter(Boolean).join(" · ");
   const downloadArchive = (format) => {
     const exportData = {
       exportedAt: new Date().toISOString(),
@@ -518,11 +590,15 @@ function ArchiveOverview({ data, onEdit }) {
         `Tags: ${item.chips.map(([label, tone]) => `${tone}:${label}`).join(", ")}`,
         "",
       ]),
-      "[AWARDS & CERTIFICATES]",
-      ...achievements.map((item) => `${item.title}: ${item.detail}`),
+      "[LANGUAGE & CERTIFICATIONS]",
+      ...achievements.map(
+        (item) => `${item.title}: ${itemMeta(item)} ${item.detail || ""}`,
+      ),
       "",
-      "[ASSETS]",
-      ...assets.map((item) => `${item.title}: ${item.detail}`),
+      "[AWARDS & EDUCATION]",
+      ...assets.map(
+        (item) => `${item.title}: ${itemMeta(item)} ${item.detail || ""}`,
+      ),
     ];
     const content =
       format === "json"
@@ -592,24 +668,54 @@ function ArchiveOverview({ data, onEdit }) {
           </div>
         </header>
         <div className="standard-resume-body">
-          <ResumeSection title="Education" meta={profile.educationPeriod}>
-            <div className="resume-entry">
-              <div>
-                <strong>{profile.school}</strong>
-                <span>{profile.major}</span>
+          <ResumeSection title="Education" meta={`${educations.length} entries`}>
+            {educations.length ? (
+              educations.map((education, index) => (
+                <div className="resume-entry" key={education.id || index}>
+                  <div>
+                    <strong>{education.school || "학교명을 입력해 주세요"}</strong>
+                    <span>
+                      {[education.major, education.degree]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    {education.description && <p>{education.description}</p>}
+                  </div>
+                  <b>
+                    {[dateRange(education.startedAt, education.endedAt), education.gpa && `GPA ${education.gpa}`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </b>
+                </div>
+              ))
+            ) : (
+              <div className="compact-entry">
+                <span>학력 정보를 입력해 주세요.</span>
               </div>
-              <b>GPA {profile.gpa}</b>
-            </div>
+            )}
           </ResumeSection>
-          <ResumeSection title="Career" meta={profile.careerPeriod}>
-            <div className="resume-entry resume-entry-copy">
-              <div>
-                <strong>
-                  {profile.careerTitle || "경력 정보를 입력해 주세요"}
-                </strong>
-                <p>{profile.careerSummary}</p>
+          <ResumeSection title="Career" meta={`${careers.length} entries`}>
+            {careers.length ? (
+              careers.map((career, index) => (
+                <div
+                  className="resume-entry resume-entry-copy"
+                  key={career.id || index}
+                >
+                  <div>
+                    <strong>
+                      {[career.company, career.role].filter(Boolean).join(" · ") ||
+                        "경력 정보를 입력해 주세요"}
+                    </strong>
+                    <p>{career.summary}</p>
+                  </div>
+                  <b>{dateRange(career.startedAt, career.endedAt)}</b>
+                </div>
+              ))
+            ) : (
+              <div className="compact-entry">
+                <span>경력 정보를 입력해 주세요.</span>
               </div>
-            </div>
+            )}
           </ResumeSection>
           <ResumeSection
             title="Projects"
@@ -635,19 +741,19 @@ function ArchiveOverview({ data, onEdit }) {
             </div>
           </ResumeSection>
           <div className="standard-bottom-grid">
-            <ResumeSection title="Awards & Certificates">
+            <ResumeSection title="Language · Certifications">
               {achievements.map((item) => (
                 <div className="compact-entry" key={item.id}>
                   <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
+                  <span>{itemMeta(item) || item.detail}</span>
                 </div>
               ))}
             </ResumeSection>
-            <ResumeSection title="Skills & Links">
+            <ResumeSection title="Awards · Education">
               {assets.map((item) => (
                 <div className="compact-entry" key={item.id}>
                   <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
+                  <span>{itemMeta(item) || item.detail}</span>
                 </div>
               ))}
             </ResumeSection>
@@ -718,9 +824,9 @@ function ArchiveSidebar({
       </div>
       <div className="archive-nav-group">
         <div className="archive-nav-title">
-          <span className="eyebrow">AWARDS</span>
+          <span className="eyebrow">어학성적/자격증</span>
           <IconButton
-            label="성과 추가"
+            label="어학성적/자격증 추가"
             onClick={() => onNewItem("achievement")}
           >
             <Plus size={14} />
@@ -734,8 +840,11 @@ function ArchiveSidebar({
       </div>
       <div className="archive-nav-group">
         <div className="archive-nav-title">
-          <span className="eyebrow">ASSETS</span>
-          <IconButton label="Asset 추가" onClick={() => onNewItem("asset")}>
+          <span className="eyebrow">수상 경력/교육사항</span>
+          <IconButton
+            label="수상 경력/교육사항 추가"
+            onClick={() => onNewItem("asset")}
+          >
             <Plus size={14} />
           </IconButton>
         </div>
@@ -1250,7 +1359,7 @@ function ExperienceEditor({ experience, onSave, isNew, notify }) {
   );
 }
 
-function ArchiveItemEditor({ item, kind, onSave, isNew }) {
+function ArchiveItemEditor({ item, kind, onSave, isNew, notify }) {
   const [form, setForm] = useState(
     item || {
       kind,
@@ -1297,7 +1406,10 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
   };
   const readCertificate = (file) => {
     if (!file) return;
-    if (file.size > 5_000_000) return;
+    if (file.size > 5_000_000) {
+      notify?.("증빙 파일은 5MB 이하로 올려 주세요.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       const fileData = String(reader.result || "");
@@ -1317,6 +1429,13 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
           }),
         });
         setForm((current) => ({ ...current, ...body.item }));
+        notify?.(
+          body.provider === "gemini"
+            ? "증빙 파일에서 정보를 추출했습니다."
+            : "파일을 첨부했습니다. 필요한 정보는 직접 보충해 주세요.",
+        );
+      } catch (error) {
+        notify?.(error.message);
       } finally {
         setOcrBusy(false);
       }
@@ -1344,10 +1463,14 @@ function ArchiveItemEditor({ item, kind, onSave, isNew }) {
       }
     >
       <div className="file-ocr-dropzone">
-        <UploadCloud size={20} />
+        {ocrBusy ? <LoaderCircle size={20} className="is-loading" /> : <UploadCloud size={20} />}
         <div>
           <strong>{ocrBusy ? "증빙을 읽는 중입니다" : "PDF 또는 이미지 첨부"}</strong>
-          <span>자격명, 등급, 기관, 취득일자를 자동으로 채웁니다.</span>
+          <span>
+            {kind === "asset"
+              ? "수상/교육명, 기관, 수상일/수료일을 자동으로 채웁니다."
+              : "자격명, 등급/점수, 기관, 취득일자를 자동으로 채웁니다."}
+          </span>
           {form.fileName && <em>{form.fileName}</em>}
         </div>
         <input
@@ -1506,11 +1629,11 @@ function ArchiveWorkspacePreview({ data, selection, onSelect, onNewExperience })
           <strong>{data.experiences.length}</strong>
         </div>
         <div>
-          <span className="eyebrow">AWARDS</span>
+          <span className="eyebrow">LANGUAGE · LICENSE</span>
           <strong>{achievements.length}</strong>
         </div>
         <div>
-          <span className="eyebrow">ASSETS</span>
+          <span className="eyebrow">AWARD · EDUCATION</span>
           <strong>{assets.length}</strong>
         </div>
       </div>
@@ -1594,12 +1717,13 @@ function ArchiveEditor({
     );
   if (selection.type === "item" || newItemKind)
     editor = (
-      <ArchiveItemEditor
+        <ArchiveItemEditor
         key={selectedItem?.id || newItemKind}
         item={selectedItem}
         kind={selectedItem?.kind || newItemKind}
         isNew={Boolean(newItemKind)}
         onSave={saveItem}
+        notify={notify}
       />
     );
   return (
@@ -1658,7 +1782,7 @@ function WritingStats({ data }) {
         <strong>{chipCount}</strong>
       </div>
       <div className="stat stat-mint">
-        <span>성과 · 자격</span>
+        <span>어학 · 자격</span>
         <strong>
           {
             data.archiveItems.filter((item) => item.kind === "achievement")
@@ -1667,7 +1791,7 @@ function WritingStats({ data }) {
         </strong>
       </div>
       <div className="stat stat-lilac">
-        <span>Assets</span>
+        <span>수상 · 교육</span>
         <strong>
           {data.archiveItems.filter((item) => item.kind === "asset").length}
         </strong>
@@ -1677,6 +1801,7 @@ function WritingStats({ data }) {
 }
 
 function WritingHouse({ data, onNew, onOpen, onDelete }) {
+  const [viewEssay, setViewEssay] = useState(null);
   const progress = (essay) =>
     essay.status === "완료" ? 100 : Math.min(90, 16 + essay.maxStep * 34);
   const stage = (essay) =>
@@ -1687,7 +1812,7 @@ function WritingHouse({ data, onNew, onOpen, onDelete }) {
     <div className="content-page">
       <PageHeading
         eyebrow="WRITING WORKSPACE"
-        title="Writing House"
+        title="Essay List"
         description="Archive의 근거를 선택해 기업·직무별 자기소개서를 작성합니다."
         actions={
           <Button
@@ -1742,6 +1867,17 @@ function WritingHouse({ data, onNew, onOpen, onDelete }) {
                 <span style={{ width: `${progress(essay)}%` }} />
               </div>
             </div>
+            <div className="document-card-cta">
+              <Button
+                icon={BookOpen}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setViewEssay(essay);
+                }}
+              >
+                자기소개서 보기
+              </Button>
+            </div>
             <div className="document-footer">
               <span>
                 {essay.questions.length}개 문항 ·{" "}
@@ -1757,7 +1893,108 @@ function WritingHouse({ data, onNew, onOpen, onDelete }) {
           <span>지원 자료에서 시작</span>
         </button>
       </div>
+      <EssaySidePanel
+        essay={viewEssay}
+        onClose={() => setViewEssay(null)}
+        onEdit={(essay) => {
+          setViewEssay(null);
+          onOpen(essay);
+        }}
+      />
     </div>
+  );
+}
+
+// Read-only Essay Q&A viewer, reused from Writing (Essay List cards) and from
+// Process Tracking (Essay column "보기" action). `onEdit` navigates into the
+// actual editable Writing workflow for that essay ("Full Edit → 해당 Main Feature").
+function EssaySidePanel({ essay, onClose, onEdit, editLabel = "Writing에서 편집" }) {
+  return (
+    <SidePanel
+      open={!!essay}
+      onClose={onClose}
+      eyebrow={essay?.company}
+      title={essay ? `${essay.role} 자기소개서` : ""}
+      footer={
+        essay && (
+          <Button
+            variant="primary"
+            className="cloud-primary"
+            icon={FileText}
+            onClick={() => onEdit(essay)}
+          >
+            {editLabel}
+          </Button>
+        )
+      }
+    >
+      {essay?.questions.map((question, index) => (
+        <div className="essay-view-item" key={question.id}>
+          <span className="eyebrow">Q{index + 1}</span>
+          <h3>{question.prompt}</h3>
+          <p className={cn("essay-view-answer", !question.draft && "is-empty")}>
+            {question.draft || "아직 저장된 답변이 없습니다."}
+          </p>
+        </div>
+      ))}
+      {essay && !essay.questions.length && (
+        <EmptyState title="등록된 문항이 없습니다." />
+      )}
+    </SidePanel>
+  );
+}
+
+// Read-only Interview Set viewer, reused from Interview (Cabinet cards) and from
+// Process Tracking (Interview column "보기" action). `onOpen` navigates into
+// Interview → Cabinet → that Set ("Full Work → 해당 Main Feature로 이동").
+function InterviewSetSidePanel({ set, onClose, onOpen }) {
+  return (
+    <SidePanel
+      open={!!set}
+      onClose={onClose}
+      eyebrow="INTERVIEW SET"
+      title={set?.name || ""}
+      wide
+      footer={
+        set && (
+          <Button
+            variant="primary"
+            className="cloud-primary"
+            icon={DoorOpen}
+            onClick={() => onOpen(set)}
+          >
+            Interview에서 열기
+          </Button>
+        )
+      }
+    >
+      {set && (
+        <>
+          <div className="side-panel-meta">
+            <div>
+              <span>Source</span>
+              <b>{set.sourceType === "essay" ? "Essay 기반" : "직접 생성"}</b>
+            </div>
+            <div>
+              <span>Readiness</span>
+              <b>{set.readiness}%</b>
+            </div>
+          </div>
+          {set.questions.map((question, index) => (
+            <div className="side-panel-qa" key={question.id}>
+              <span className="eyebrow">Q{index + 1}</span>
+              <h4>{question.questionText}</h4>
+              <p className={cn("essay-view-answer", !question.answerText && "is-empty")}>
+                {question.answerText || "아직 저장된 답변이 없습니다."}
+              </p>
+            </div>
+          ))}
+          {!set.questions.length && (
+            <EmptyState title="등록된 질문이 없습니다." />
+          )}
+        </>
+      )}
+    </SidePanel>
   );
 }
 
@@ -1941,7 +2178,7 @@ function SourceIntake({
         <span className="eyebrow">SOURCE INTAKE</span>
         <h1>지원 자료와 문항을 입력하세요.</h1>
         <p>
-          기업명과 직무는 Writing House의 자기소개서 제목과 지원 현황에 함께
+          기업명과 직무는 Essay List의 자기소개서 제목과 지원 현황에 함께
           반영됩니다.
         </p>
       </div>
@@ -3032,7 +3269,7 @@ function WritingFeedback({
             </Button>
             <small>
               {apiConfig.llmEnabled
-                ? `${apiConfig.model} 연결됨`
+                ? `${apiConfig.llmProvider === "openai" ? "OpenAI" : "Gemini"} · ${apiConfig.model} 연결됨`
                 : "데모 AI 응답 사용 중"}
             </small>
           </div>
@@ -3042,92 +3279,1312 @@ function WritingFeedback({
   );
 }
 
-function ApplicationDialog({ onClose, onSave, busy }) {
-  const [form, setForm] = useState({
-    company: "",
-    role: "",
-    status: "지원 예정",
-    submittedAt: "",
-  });
+const blankApplicationForm = {
+  company: "",
+  role: "",
+  jobTitle: "",
+  status: "지원 예정",
+  submittedAt: "",
+};
+
+// Right Side Panel form for 지원 추가 (add application) — no gray dim overlay.
+// Supports both creation paths from the brief: A) pick an existing Essay and
+// auto-fill company/role/essayId, or B) enter everything manually (Essay optional).
+function ApplicationPanel({ open, onClose, onSave, busy, essays }) {
+  const [mode, setMode] = useState("manual");
+  const [essayId, setEssayId] = useState("");
+  const [form, setForm] = useState(blankApplicationForm);
+  useEffect(() => {
+    if (!open) return;
+    setMode("manual");
+    setEssayId(essays[0]?.id || "");
+    setForm(blankApplicationForm);
+  }, [open]);
+  useEffect(() => {
+    if (mode !== "essay") return;
+    const essay = essays.find((item) => item.id === essayId);
+    if (essay) {
+      setForm((current) => ({ ...current, company: essay.company, role: essay.role }));
+    }
+  }, [mode, essayId]);
+  const submit = () => {
+    onSave({
+      company: form.company,
+      role: form.role,
+      jobTitle: form.jobTitle,
+      status: form.status,
+      submittedAt: form.submittedAt,
+      essayId: mode === "essay" ? essayId : "",
+    });
+  };
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
-      <form
-        className="modal-panel modal-small"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave(form);
-        }}
-      >
-        <div className="modal-head">
-          <div>
-            <span className="eyebrow">APPLICATION</span>
-            <h2>지원 추가</h2>
-          </div>
-          <IconButton type="button" label="닫기" onClick={onClose}>
-            <X size={18} />
-          </IconButton>
-        </div>
-        <div className="modal-body">
-          <div className="form-grid">
-            <Field
-              label="기업명"
-              value={form.company}
-              required
-              onChange={(value) =>
-                setForm((current) => ({ ...current, company: value }))
-              }
-            />
-            <Field
-              label="직무"
-              value={form.role}
-              onChange={(value) =>
-                setForm((current) => ({ ...current, role: value }))
-              }
-            />
-            <label className="field-group">
-              <span>상태</span>
-              <select
-                value={form.status}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    status: event.target.value,
-                  }))
-                }
-              >
-                {statusOptions.map((status) => (
-                  <option key={status}>{status}</option>
-                ))}
-              </select>
-            </label>
-            <Field
-              label="제출일"
-              type="date"
-              value={form.submittedAt}
-              onChange={(value) =>
-                setForm((current) => ({ ...current, submittedAt: value }))
-              }
-            />
-          </div>
-        </div>
-        <div className="modal-actions">
-          <Button type="button" onClick={onClose}>
-            취소
-          </Button>
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      eyebrow="APPLICATION"
+      title="지원 추가"
+      footer={
+        <>
+          <Button onClick={onClose}>취소</Button>
           <Button
-            type="submit"
             variant="primary"
             icon={busy ? LoaderCircle : Cloud}
             className={cn("cloud-primary", busy && "is-loading")}
             disabled={busy || !form.company.trim()}
+            onClick={submit}
           >
             추가
           </Button>
+        </>
+      }
+    >
+      <div className="mode-tabs">
+        <button
+          type="button"
+          className={mode === "essay" ? "active" : ""}
+          onClick={() => setMode("essay")}
+          disabled={!essays.length}
+        >
+          기존 Essay 기반
+        </button>
+        <button
+          type="button"
+          className={mode === "manual" ? "active" : ""}
+          onClick={() => setMode("manual")}
+        >
+          직접 추가
+        </button>
+      </div>
+      {mode === "essay" && (
+        <label className="field-group">
+          <span>Essay 선택</span>
+          <select value={essayId} onChange={(event) => setEssayId(event.target.value)}>
+            {essays.map((essay) => (
+              <option key={essay.id} value={essay.id}>
+                {essay.company} · {essay.role}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div className="form-grid">
+        <Field
+          label="기업명"
+          value={form.company}
+          required
+          onChange={(value) => setForm((current) => ({ ...current, company: value }))}
+        />
+        <Field
+          label="직무"
+          value={form.role}
+          onChange={(value) => setForm((current) => ({ ...current, role: value }))}
+        />
+        <Field
+          label="공고명"
+          value={form.jobTitle}
+          onChange={(value) => setForm((current) => ({ ...current, jobTitle: value }))}
+        />
+        <label className="field-group">
+          <span>상태</span>
+          <select
+            value={form.status}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, status: event.target.value }))
+            }
+          >
+            {statusOptions.map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </select>
+        </label>
+        <Field
+          label="지원일"
+          type="date"
+          value={form.submittedAt}
+          onChange={(value) => setForm((current) => ({ ...current, submittedAt: value }))}
+        />
+      </div>
+    </SidePanel>
+  );
+}
+
+const readinessLabel = {
+  ready: "Ready",
+  need_refinement: "Need refinement",
+  missing: "Missing",
+};
+
+function CabinetCustomAnswerEditor({ entry, busy, onSave, onCancel }) {
+  const [answerText, setAnswerText] = useState(entry.answerText || "");
+  return (
+    <div className="cabinet-add-form">
+      <label className="field-group">
+        <span>답변</span>
+        <textarea
+          value={answerText}
+          onChange={(event) => setAnswerText(event.target.value)}
+          placeholder="답변을 정리해 보세요."
+          autoFocus
+        />
+      </label>
+      <div className="cabinet-add-actions">
+        <Button onClick={onCancel}>취소</Button>
+        <Button
+          variant="primary"
+          className="cloud-primary"
+          icon={busy ? LoaderCircle : Cloud}
+          disabled={busy}
+          onClick={() => onSave({ answerText })}
+        >
+          저장
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SetQuestionCard({
+  question,
+  index,
+  onSave,
+  onMoveUp,
+  onMoveDown,
+  onDelete,
+  isFirst,
+  isLast,
+  reordering,
+}) {
+  const [answerText, setAnswerText] = useState(question.answerText || "");
+  const [followupText, setFollowupText] = useState(question.followupText || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setAnswerText(question.answerText || "");
+    setFollowupText(question.followupText || "");
+  }, [question.id, question.answerText, question.followupText]);
+  const dirty =
+    answerText !== (question.answerText || "") ||
+    followupText !== (question.followupText || "");
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({ answerText, followupText });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <article className={cn("set-question-card", question.status)}>
+      <div className="set-question-head">
+        <span className="source-chip soft">{question.sourceType}</span>
+        <div className="set-question-head-right">
+          <b className={`readiness-dot ${question.status}`} />
+          <small>{readinessLabel[question.status]}</small>
+          <div className="set-question-reorder">
+            <IconButton
+              label="위로 이동"
+              disabled={isFirst || reordering}
+              onClick={onMoveUp}
+            >
+              <ChevronUp size={14} />
+            </IconButton>
+            <IconButton
+              label="아래로 이동"
+              disabled={isLast || reordering}
+              onClick={onMoveDown}
+            >
+              <ChevronDown size={14} />
+            </IconButton>
+          </div>
+          <IconButton label="질문 삭제" className="danger-action" onClick={onDelete}>
+            <Trash2 size={13} />
+          </IconButton>
         </div>
-      </form>
+      </div>
+      <h3>
+        Q{index + 1}. {question.questionText}
+      </h3>
+      <label className="field-group">
+        <span>Answer</span>
+        <textarea
+          value={answerText}
+          onChange={(event) => setAnswerText(event.target.value)}
+          placeholder="답변을 정리해 보세요."
+        />
+      </label>
+      <label className="field-group">
+        <span>Follow-up</span>
+        <textarea
+          value={followupText}
+          onChange={(event) => setFollowupText(event.target.value)}
+          placeholder="예상 꼬리 질문이나 보완할 점을 적어두세요."
+        />
+      </label>
+      <div className="set-question-actions">
+        <Button
+          variant="primary"
+          className="cloud-primary"
+          icon={busy ? LoaderCircle : Cloud}
+          disabled={busy || !dirty}
+          onClick={save}
+        >
+          저장
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+const blankSetCreateForm = {
+  name: "",
+  company: "",
+  role: "",
+  questionCategory: "",
+  jdProvided: false,
+  jdText: "",
+};
+
+function Interview({ data, apiConfig, onReload, notify, focusSet }) {
+  const interview = data.interview || blankData.interview;
+  const sets = interview.sets || [];
+  const [view, setView] = useState("room");
+  const [selectedSetId, setSelectedSetId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [reorderingSetId, setReorderingSetId] = useState("");
+  const [createMode, setCreateMode] = useState("essay");
+  const [createEssayId, setCreateEssayId] = useState(data.essays[0]?.id || "");
+  const [createForm, setCreateForm] = useState(blankSetCreateForm);
+  const [homeInput, setHomeInput] = useState("");
+  const [selectedClusterId, setSelectedClusterId] = useState(
+    interview.clusters[0]?.id || "self_intro",
+  );
+  const [messages, setMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [coachingByMessageId, setCoachingByMessageId] = useState({});
+  const [selectedCoachingId, setSelectedCoachingId] = useState("");
+  const [coachingLoading, setCoachingLoading] = useState(false);
+  const chatThreadRef = useRef(null);
+  useEffect(() => {
+    chatThreadRef.current?.scrollTo({ top: chatThreadRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, coachingLoading]);
+  const assetsByCluster = useMemo(
+    () =>
+      new Map(
+        interview.answerAssets.map((asset) => [asset.questionClusterId, asset]),
+      ),
+    [interview.answerAssets],
+  );
+  const selectedCluster =
+    interview.clusters.find((item) => item.id === selectedClusterId) ||
+    interview.clusters[0];
+  const todayCluster =
+    interview.clusters.find((cluster) => !assetsByCluster.get(cluster.id)) ||
+    interview.clusters.find(
+      (cluster) => assetsByCluster.get(cluster.id)?.readiness !== "ready",
+    ) ||
+    interview.clusters[0];
+  const representativeExperience =
+    data.experiences.find(
+      (item) =>
+        item.id ===
+        (assetsByCluster.get(selectedCluster?.id)?.representativeExperienceId || ""),
+    ) || data.experiences[0];
+  const selectedSet = sets.find((item) => item.id === selectedSetId);
+
+  // Cabinet: every question ever answered — from the quick "오늘의 질문" practice
+  // (interview.answerAssets, keyed by cluster), from every Interview Set's
+  // questions, and from questions the user adds directly — organized by
+  // cluster category for browsing. Set/custom questions both come from the
+  // same flat interview.questions list (each row appears exactly once there),
+  // told apart by whether they belong to a Set (sessionId set) or not.
+  const setsBySessionId = useMemo(() => new Map(sets.map((set) => [set.id, set])), [sets]);
+  const cabinetEntries = useMemo(() => {
+    const entries = [];
+    interview.clusters.forEach((cluster) => {
+      const asset = assetsByCluster.get(cluster.id);
+      if (asset && (asset.fullAnswer || asset.coreMessage)) {
+        entries.push({
+          id: `practice-${cluster.id}`,
+          group: cluster.group,
+          clusterId: cluster.id,
+          clusterLabel: cluster.label,
+          questionText: cluster.label,
+          answerText: asset.fullAnswer || asset.coreMessage,
+          status: asset.readiness,
+          sourceLabel: "오늘의 질문 연습",
+          sourceType: "practice",
+        });
+      }
+    });
+    interview.questions.forEach((question) => {
+      const cluster =
+        interview.clusters.find((item) => item.id === question.questionClusterId) ||
+        interview.clusters[0];
+      const set = question.sessionId ? setsBySessionId.get(question.sessionId) : null;
+      entries.push({
+        id: question.id,
+        group: cluster?.group || "Core",
+        clusterId: cluster?.id || "",
+        clusterLabel: cluster?.label || "",
+        questionText: question.questionText,
+        answerText: question.answerText,
+        status: question.status,
+        sourceLabel: set ? set.name || "Interview Set" : "직접 추가",
+        sourceType: set ? "set" : "custom",
+        setId: set?.id || "",
+      });
+    });
+    return entries;
+  }, [interview.clusters, interview.questions, assetsByCluster, setsBySessionId]);
+  const cabinetGroupOrder = ["Core", "Behavioral", "Experience", "Job Knowledge"];
+  const cabinetGroups = cabinetGroupOrder
+    .map((group) => {
+      const clusters = interview.clusters.filter((cluster) => cluster.group === group);
+      const answeredClusterIds = new Set(
+        cabinetEntries
+          .filter((entry) => entry.group === group)
+          .map((entry) => entry.clusterId),
+      );
+      return { group, clusters, answeredClusterCount: answeredClusterIds.size };
+    })
+    .filter((item) => item.clusters.length);
+  const [cabinetGroupId, setCabinetGroupId] = useState("");
+  const [cabinetClusterId, setCabinetClusterId] = useState("");
+  const [addingQuestion, setAddingQuestion] = useState(false);
+  const [customEditId, setCustomEditId] = useState("");
+  const [newQuestionText, setNewQuestionText] = useState("");
+  const [newAnswerText, setNewAnswerText] = useState("");
+  const activeCabinetGroup =
+    cabinetGroups.find((item) => item.group === cabinetGroupId) || cabinetGroups[0];
+  const activeCabinetCluster =
+    activeCabinetGroup?.clusters.find((item) => item.id === cabinetClusterId) ||
+    activeCabinetGroup?.clusters[0];
+  const activeCabinetEntries = cabinetEntries.filter(
+    (entry) => entry.clusterId === activeCabinetCluster?.id,
+  );
+  const openCabinet = () => {
+    setCabinetGroupId(cabinetGroups[0]?.group || "");
+    setCabinetClusterId(cabinetGroups[0]?.clusters[0]?.id || "");
+    setAddingQuestion(false);
+    setView("cabinet");
+  };
+  const addCustomQuestion = async () => {
+    if (!activeCabinetCluster || !newQuestionText.trim()) return;
+    setBusy(true);
+    try {
+      await api("/api/interview/questions", {
+        method: "POST",
+        body: JSON.stringify({
+          questionClusterId: activeCabinetCluster.id,
+          questionText: newQuestionText,
+          answerText: newAnswerText,
+        }),
+      });
+      await onReload();
+      setAddingQuestion(false);
+      setNewQuestionText("");
+      setNewAnswerText("");
+      notify("Cabinet에 질문을 추가했습니다.");
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteCustomQuestion = async (entry) => {
+    if (!window.confirm("이 질문을 삭제할까요?")) return;
+    try {
+      await api(`/api/interview/questions/${entry.id}`, { method: "DELETE" });
+      await onReload();
+      notify("질문을 삭제했습니다.");
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+
+  useEffect(() => {
+    if (!focusSet) return;
+    if (focusSet.id) {
+      setSelectedSetId(focusSet.id);
+      setView("set-detail");
+      setCreating(false);
+    } else {
+      setView("room");
+      setCreateMode(data.essays.length ? "essay" : "manual");
+      setCreateEssayId(data.essays[0]?.id || "");
+      setCreateForm(blankSetCreateForm);
+      setCreating(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSet?.token]);
+
+  const openingLine = (cluster) => `${cluster?.label || "자기소개"}에 대해 말씀해 주시겠어요?`;
+  const openChat = (clusterId, prefill = "") => {
+    const cluster =
+      interview.clusters.find((item) => item.id === clusterId) ||
+      selectedCluster ||
+      todayCluster;
+    if (clusterId) setSelectedClusterId(clusterId);
+    const opening = { id: `m-${Date.now()}-i`, role: "interviewer", text: openingLine(cluster) };
+    const initial = prefill.trim()
+      ? [opening, { id: `m-${Date.now()}-me`, role: "me", text: prefill.trim() }]
+      : [opening];
+    setMessages(initial);
+    setChatInput("");
+    setCoachingByMessageId({});
+    setSelectedCoachingId("");
+    setCreating(false);
+    setView("chat");
+    if (prefill.trim()) requestCoaching(initial[initial.length - 1], initial);
+  };
+  const startToday = () => openChat(todayCluster?.id, "");
+  const requestCoaching = async (message, history) => {
+    setCoachingLoading(true);
+    setSelectedCoachingId(message.id);
+    try {
+      const questionText =
+        [...history].reverse().find((item) => item.role === "interviewer" && item !== message)
+          ?.text || "";
+      const body = await api("/api/llm/interview-coaching", {
+        method: "POST",
+        body: JSON.stringify({
+          questionText,
+          answerText: message.text,
+          history: history.map((item) => ({ role: item.role, text: item.text })),
+          experiences: data.experiences,
+        }),
+      });
+      setCoachingByMessageId((current) => ({ ...current, [message.id]: body.coaching }));
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === message.id ? { ...item, followups: body.coaching.followups || [] } : item,
+        ),
+      );
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setCoachingLoading(false);
+    }
+  };
+  const sendMessage = () => {
+    if (!chatInput.trim()) return;
+    const message = { id: `m-${Date.now()}-me`, role: "me", text: chatInput.trim() };
+    const next = [...messages, message];
+    setMessages(next);
+    setChatInput("");
+    requestCoaching(message, next);
+  };
+  const askFollowup = (text) => {
+    setMessages((current) => [...current, { id: `m-${Date.now()}-i`, role: "interviewer", text }]);
+  };
+  const selectedCoaching = coachingByMessageId[selectedCoachingId];
+  const selectedCoachingMessage = messages.find((item) => item.id === selectedCoachingId);
+  const toggleCreate = () => {
+    setCreating((current) => {
+      const next = !current;
+      if (next) {
+        setCreateMode(data.essays.length ? "essay" : "manual");
+        setCreateEssayId(data.essays[0]?.id || "");
+        setCreateForm(blankSetCreateForm);
+      }
+      return next;
+    });
+  };
+  const submitHomeInput = () => {
+    if (!homeInput.trim()) return;
+    openChat(todayCluster?.id, homeInput.trim());
+    setHomeInput("");
+  };
+  const createSet = async () => {
+    setBusy(true);
+    try {
+      const essay =
+        createMode === "essay"
+          ? data.essays.find((item) => item.id === createEssayId)
+          : null;
+      const pseudoApplication = {
+        company: createMode === "essay" ? essay?.company : createForm.company,
+        role: createMode === "essay" ? essay?.role : createForm.role,
+      };
+      const generated = await api("/api/llm/interview-questions", {
+        method: "POST",
+        body: JSON.stringify({
+          application: pseudoApplication,
+          essay: essay || {},
+          experiences: data.experiences,
+        }),
+      });
+      const body = await api("/api/interview/sets", {
+        method: "POST",
+        body: JSON.stringify({
+          name: createForm.name,
+          essayId: createMode === "essay" ? createEssayId : "",
+          essay: essay || undefined,
+          company: createMode === "manual" ? createForm.company : undefined,
+          role: createMode === "manual" ? createForm.role : undefined,
+          questionCategory: createForm.questionCategory,
+          jdProvided: createForm.jdProvided,
+          jdText: createForm.jdText,
+          experiences: data.experiences,
+          questions: generated.questions || [],
+        }),
+      });
+      await onReload();
+      setSelectedSetId(body.set.id);
+      setCreating(false);
+      setView("set-detail");
+      notify(
+        generated.provider === "gemini"
+          ? "Gemini로 Interview Set을 생성했습니다."
+          : generated.provider === "openai"
+            ? "OpenAI로 Interview Set을 생성했습니다."
+            : "데모 질문으로 Interview Set을 생성했습니다.",
+      );
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteSet = async (set) => {
+    if (!window.confirm(`'${set.name}' Interview Set을 삭제할까요?`)) return;
+    try {
+      await api(`/api/interview/sets/${set.id}`, { method: "DELETE" });
+      await onReload();
+      setView("room");
+      notify("Interview Set을 삭제했습니다.");
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+  const saveQuestionAnswer = async (question, patch) => {
+    await api(`/api/interview/questions/${question.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    await onReload();
+    notify("답변을 저장했습니다.");
+  };
+  const moveSetQuestion = async (set, index, direction) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= set.questions.length) return;
+    const order = set.questions.map((question) => question.id);
+    [order[index], order[targetIndex]] = [order[targetIndex], order[index]];
+    setReorderingSetId(set.id);
+    try {
+      await api(`/api/interview/sets/${set.id}/reorder`, {
+        method: "PUT",
+        body: JSON.stringify({ questionIds: order }),
+      });
+      await onReload();
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setReorderingSetId("");
+    }
+  };
+  const deleteSetQuestion = async (question) => {
+    if (!window.confirm("이 질문을 Interview Set에서 삭제할까요?")) return;
+    try {
+      await api(`/api/interview/questions/${question.id}`, { method: "DELETE" });
+      await onReload();
+      notify("질문을 삭제했습니다.");
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+  const saveCoachedAnswer = async () => {
+    if (!selectedCoachingMessage) return;
+    const cluster = selectedCluster || todayCluster;
+    const experience = representativeExperience;
+    const coaching = selectedCoaching;
+    setBusy(true);
+    try {
+      await api("/api/interview/answer-assets", {
+        method: "POST",
+        body: JSON.stringify({
+          questionClusterId: cluster.id,
+          clusterLabel: cluster.label,
+          representativeExperienceId: experience?.id || "",
+          coreMessage: selectedCoachingMessage.text.slice(0, 90),
+          talkingPoints: {},
+          fullAnswer: selectedCoachingMessage.text,
+          followupQuestions: coaching?.followups || [],
+          archiveGrounding: {
+            experience: experience?.title || "",
+            materials: experience?.chips
+              ?.filter(([, tone]) => tone === "material")
+              .map(([label]) => label),
+            results: experience?.chips
+              ?.filter(([, tone]) => tone === "result")
+              .map(([label]) => label),
+            skills: experience?.chips
+              ?.filter(([, tone]) => tone === "skill")
+              .map(([label]) => label),
+          },
+          weakSpots: coaching?.improvements || [],
+        }),
+      });
+      await onReload();
+      notify("연습 답변을 저장했습니다.");
+      setView("room");
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="content-page interview-page">
+      {view === "room" && (
+        <>
+          <PageHeading
+            eyebrow="SPOKEN PREPARATION LAYER"
+            title="Interview Room"
+            description="오늘의 질문에 답하며 연습하거나, Interview Set을 만들고, Cabinet에서 모든 질문을 카테고리별로 찾아봅니다."
+            actions={
+              <Button variant="primary" className="cloud-primary" icon={LayoutDashboard} onClick={openCabinet}>
+                Cabinet
+              </Button>
+            }
+          />
+          <div className="interview-today-hero">
+            <span className="eyebrow">TODAY'S QUESTION</span>
+            <h1>
+              <span className="highlight-mark">{todayCluster?.label || "핵심 질문"}</span>
+            </h1>
+            <p>
+              {data.experiences[0]?.title
+                ? `추천 경험 · ${data.experiences[0].title}을 바탕으로 답을 정리해보세요.`
+                : "Archive에 경험을 등록하면 더 정확한 질문을 추천해드립니다."}
+            </p>
+            <form
+              className="claude-input"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitHomeInput();
+              }}
+            >
+              <textarea
+                value={homeInput}
+                onChange={(event) => setHomeInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submitHomeInput();
+                  }
+                }}
+                placeholder="이 질문에 대한 답을 자유롭게 적어보세요..."
+                rows={1}
+              />
+              <button
+                type="submit"
+                className="claude-input-send"
+                disabled={!homeInput.trim()}
+                aria-label="답변 시작하기"
+              >
+                <ArrowUp size={18} />
+              </button>
+            </form>
+          </div>
+          <div className="section-divider" />
+          <section className="cabinet-section">
+            <div className="cabinet-section-actions">
+              <Button
+                variant="primary"
+                className="cloud-primary"
+                icon={Plus}
+                onClick={toggleCreate}
+              >
+                Interview Set
+              </Button>
+            </div>
+            <SidePanel
+              open={creating}
+              onClose={() => setCreating(false)}
+              eyebrow="CABINET"
+              title="새 Interview Set"
+              footer={
+                <Button
+                  variant="primary"
+                  className="cloud-primary"
+                  icon={busy ? LoaderCircle : Sparkles}
+                  disabled={busy || (createMode === "essay" && !createEssayId)}
+                  onClick={createSet}
+                >
+                  Interview Set 생성
+                </Button>
+              }
+            >
+              <div className="mode-tabs">
+                <button
+                  type="button"
+                  className={createMode === "essay" ? "active" : ""}
+                  onClick={() => setCreateMode("essay")}
+                  disabled={!data.essays.length}
+                >
+                  Essay 기반
+                </button>
+                <button
+                  type="button"
+                  className={createMode === "manual" ? "active" : ""}
+                  onClick={() => setCreateMode("manual")}
+                >
+                  직접 생성
+                </button>
+              </div>
+              {createMode === "essay" ? (
+                <label className="field-group">
+                  <span>Essay 선택</span>
+                  <select value={createEssayId} onChange={(event) => setCreateEssayId(event.target.value)}>
+                    {data.essays.map((essay) => (
+                      <option key={essay.id} value={essay.id}>
+                        {essay.company} · {essay.role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="form-grid">
+                  <Field
+                    label="지원 회사"
+                    value={createForm.company}
+                    onChange={(value) => setCreateForm((current) => ({ ...current, company: value }))}
+                  />
+                  <Field
+                    label="지원 직무"
+                    value={createForm.role}
+                    onChange={(value) => setCreateForm((current) => ({ ...current, role: value }))}
+                  />
+                  <Field
+                    label="질문 유형"
+                    value={createForm.questionCategory}
+                    placeholder="예: 인성, 기술, PT 면접"
+                    onChange={(value) =>
+                      setCreateForm((current) => ({ ...current, questionCategory: value }))
+                    }
+                  />
+                </div>
+              )}
+              <Field
+                label="Set Name"
+                value={createForm.name}
+                placeholder="예: 한국전력거래소 Interview Set"
+                onChange={(value) => setCreateForm((current) => ({ ...current, name: value }))}
+              />
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={createForm.jdProvided}
+                  onChange={(event) =>
+                    setCreateForm((current) => ({ ...current, jdProvided: event.target.checked }))
+                  }
+                />
+                <span>JD를 입력합니다</span>
+              </label>
+              {createForm.jdProvided && (
+                <label className="field-group">
+                  <span>JD 내용</span>
+                  <textarea
+                    value={createForm.jdText}
+                    onChange={(event) =>
+                      setCreateForm((current) => ({ ...current, jdText: event.target.value }))
+                    }
+                    placeholder="채용 공고 JD를 붙여넣어 주세요."
+                  />
+                </label>
+              )}
+            </SidePanel>
+            <div className="cabinet-grid">
+              {sets.map((set) => {
+                const needCount = set.questions.filter(
+                  (question) => question.status === "need_refinement",
+                ).length;
+                return (
+                  <article
+                    className="cabinet-card"
+                    key={set.id}
+                    onClick={() => {
+                      setSelectedSetId(set.id);
+                      setCreating(false);
+                      setView("set-detail");
+                    }}
+                  >
+                    <span className="eyebrow">
+                      {set.company || "공통"}
+                      {set.role ? ` · ${set.role}` : ""}
+                    </span>
+                    <h3>{set.name || "이름 없는 Set"}</h3>
+                    <Chip tone={set.sourceType === "essay" ? "material" : "skill"}>
+                      {set.sourceType === "essay" ? "Essay 기반" : "직접 생성"}
+                    </Chip>
+                    <div className="cabinet-card-stats">
+                      <div>
+                        <span>Questions</span>
+                        <b>{set.questions.length}</b>
+                      </div>
+                      <div>
+                        <span>Ready</span>
+                        <b>{set.readyCount}</b>
+                      </div>
+                      <div>
+                        <span>Weak Spot</span>
+                        <b>{needCount}</b>
+                      </div>
+                    </div>
+                    <small>최근 수정 {relativeTime(set.updatedAt)}</small>
+                  </article>
+                );
+              })}
+              {!sets.length && !creating && (
+                <EmptyState title="아직 만든 Interview Set이 없습니다. + Interview Set으로 시작해 보세요." />
+              )}
+            </div>
+          </section>
+        </>
+      )}
+      {view === "cabinet" && (
+        <>
+          <PageHeading
+            eyebrow="QUESTION LIBRARY"
+            title="Cabinet"
+            description="오늘의 질문 연습과 모든 Interview Set에서 사용한 질문을 카테고리별로 모아둡니다."
+            actions={
+              <Button icon={ArrowLeft} onClick={() => setView("room")}>
+                Interview Room으로
+              </Button>
+            }
+          />
+          <div className="cabinet-split">
+            <aside className="cabinet-pane cabinet-pane-groups">
+              {cabinetGroups.map((item) => (
+                <button
+                  key={item.group}
+                  className={activeCabinetGroup?.group === item.group ? "active" : ""}
+                  onClick={() => {
+                    setCabinetGroupId(item.group);
+                    setCabinetClusterId(item.clusters[0]?.id || "");
+                    setAddingQuestion(false);
+                  }}
+                >
+                  <span>{item.group}</span>
+                  <small>
+                    {item.answeredClusterCount}/{item.clusters.length}
+                  </small>
+                </button>
+              ))}
+            </aside>
+            <aside className="cabinet-pane cabinet-pane-clusters">
+              {activeCabinetGroup?.clusters.map((cluster) => {
+                const count = cabinetEntries.filter(
+                  (entry) => entry.clusterId === cluster.id,
+                ).length;
+                return (
+                  <button
+                    key={cluster.id}
+                    className={activeCabinetCluster?.id === cluster.id ? "active" : ""}
+                    onClick={() => {
+                      setCabinetClusterId(cluster.id);
+                      setAddingQuestion(false);
+                    }}
+                  >
+                    <b className={`readiness-dot ${count ? "ready" : "missing"}`} />
+                    <span>{cluster.label}</span>
+                    <small>{count}</small>
+                  </button>
+                );
+              })}
+            </aside>
+            <section className="cabinet-pane cabinet-pane-entries">
+              <div className="cabinet-entries-head">
+                <h3>{activeCabinetCluster?.label || "카테고리를 선택하세요"}</h3>
+                {activeCabinetCluster && (
+                  <Button
+                    icon={addingQuestion ? X : Plus}
+                    onClick={() => {
+                      setAddingQuestion((current) => !current);
+                      setNewQuestionText("");
+                      setNewAnswerText("");
+                    }}
+                  >
+                    {addingQuestion ? "닫기" : "질문 추가"}
+                  </Button>
+                )}
+              </div>
+              {addingQuestion && (
+                <div className="cabinet-add-form">
+                  <label className="field-group">
+                    <span>질문</span>
+                    <textarea
+                      value={newQuestionText}
+                      onChange={(event) => setNewQuestionText(event.target.value)}
+                      placeholder="직접 준비하고 싶은 질문을 적어주세요."
+                    />
+                  </label>
+                  <label className="field-group">
+                    <span>답변</span>
+                    <textarea
+                      value={newAnswerText}
+                      onChange={(event) => setNewAnswerText(event.target.value)}
+                      placeholder="답변을 정리해 보세요. (나중에 작성해도 됩니다)"
+                    />
+                  </label>
+                  <div className="cabinet-add-actions">
+                    <Button
+                      variant="primary"
+                      className="cloud-primary"
+                      icon={busy ? LoaderCircle : Plus}
+                      disabled={busy || !newQuestionText.trim()}
+                      onClick={addCustomQuestion}
+                    >
+                      추가
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {activeCabinetEntries.map((entry) => (
+                <article className="cabinet-entry-card" key={entry.id}>
+                  <div className="cabinet-entry-head">
+                    <span className="source-chip soft">{entry.sourceLabel}</span>
+                    <div className="cabinet-entry-head-right">
+                      <b className={`readiness-dot ${entry.status}`} />
+                      {entry.sourceType === "set" && (
+                        <IconButton
+                          label="Set에서 열기"
+                          className="cabinet-entry-open"
+                          onClick={() => {
+                            setSelectedSetId(entry.setId);
+                            setView("set-detail");
+                          }}
+                        >
+                          <ArrowRight size={13} />
+                        </IconButton>
+                      )}
+                    </div>
+                  </div>
+                  <h4>{entry.questionText}</h4>
+                  <p className={cn("essay-view-answer", !entry.answerText && "is-empty")}>
+                    {entry.answerText || "아직 저장된 답변이 없습니다."}
+                  </p>
+                  {entry.sourceType === "practice" && (
+                    <Button onClick={() => openChat(entry.clusterId, "")}>
+                      Guided Chat에서 이어쓰기
+                    </Button>
+                  )}
+                  {entry.sourceType === "custom" && (
+                    <div className="cabinet-entry-actions">
+                      <Button onClick={() => setCustomEditId(entry.id)}>답변 수정</Button>
+                      <IconButton
+                        label="질문 삭제"
+                        className="danger-action"
+                        onClick={() => deleteCustomQuestion(entry)}
+                      >
+                        <Trash2 size={15} />
+                      </IconButton>
+                    </div>
+                  )}
+                  {customEditId === entry.id && (
+                    <CabinetCustomAnswerEditor
+                      entry={entry}
+                      busy={busy}
+                      onCancel={() => setCustomEditId("")}
+                      onSave={async (patch) => {
+                        setBusy(true);
+                        try {
+                          await api(`/api/interview/questions/${entry.id}`, {
+                            method: "PATCH",
+                            body: JSON.stringify(patch),
+                          });
+                          await onReload();
+                          setCustomEditId("");
+                          notify("답변을 저장했습니다.");
+                        } catch (error) {
+                          notify(error.message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                  )}
+                </article>
+              ))}
+              {!activeCabinetEntries.length && !addingQuestion && (
+                <EmptyState title="이 카테고리에는 아직 작성된 답변이 없습니다." />
+              )}
+            </section>
+          </div>
+        </>
+      )}
+      {view === "set-detail" && selectedSet && (
+        <>
+          <PageHeading
+            eyebrow="INTERVIEW SET"
+            title={selectedSet.name || "이름 없는 Set"}
+            description={
+              selectedSet.sourceType === "essay"
+                ? "Essay · Archive · JD 기반으로 생성된 질문 세트입니다."
+                : "직접 입력한 정보로 생성된 질문 세트입니다."
+            }
+            actions={
+              <>
+                <Button icon={ArrowLeft} onClick={() => setView("room")}>
+                  Interview Room으로
+                </Button>
+                <IconButton
+                  label="Interview Set 삭제"
+                  className="danger-action"
+                  onClick={() => deleteSet(selectedSet)}
+                >
+                  <Trash2 size={15} />
+                </IconButton>
+              </>
+            }
+          />
+          <div className="side-panel-meta set-detail-meta">
+            <div>
+              <span>Source</span>
+              <b>{selectedSet.sourceType === "essay" ? "Essay 기반" : "직접 생성"}</b>
+            </div>
+            <div>
+              <span>Readiness</span>
+              <b>{selectedSet.readiness}%</b>
+            </div>
+          </div>
+          <div className="set-question-list">
+            {selectedSet.questions.map((question, index) => (
+              <SetQuestionCard
+                key={question.id}
+                index={index}
+                question={question}
+                onSave={(patch) => saveQuestionAnswer(question, patch)}
+                onMoveUp={() => moveSetQuestion(selectedSet, index, -1)}
+                onMoveDown={() => moveSetQuestion(selectedSet, index, 1)}
+                onDelete={() => deleteSetQuestion(question)}
+                isFirst={index === 0}
+                isLast={index === selectedSet.questions.length - 1}
+                reordering={reorderingSetId === selectedSet.id}
+              />
+            ))}
+            {!selectedSet.questions.length && (
+              <EmptyState title="생성된 질문이 없습니다." />
+            )}
+          </div>
+        </>
+      )}
+      {view === "chat" && (
+        <>
+          <PageHeading
+            eyebrow="MOCK INTERVIEW"
+            title={`${selectedCluster?.label || todayCluster?.label} 답변 준비`}
+            description="메시지를 보내듯 자유롭게 답변해 보세요. AI가 바로 코칭해드립니다."
+            actions={
+              <Button icon={ArrowLeft} onClick={() => setView("room")}>
+                Interview Room으로
+              </Button>
+            }
+          />
+          <section className="imessage-layout">
+            <div className="imessage-panel">
+              <div className="imessage-thread" ref={chatThreadRef}>
+                {messages.map((message) => {
+                  const hasCoaching = message.role === "me" && !!coachingByMessageId[message.id];
+                  return (
+                    <div
+                      key={message.id}
+                      className={cn(
+                        "imessage-row",
+                        message.role === "me" ? "from-me" : "from-them",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        className={cn(
+                          "imessage-bubble",
+                          message.role === "me" ? "bubble-me" : "bubble-them",
+                          hasCoaching && "has-coaching",
+                          hasCoaching && selectedCoachingId === message.id && "bubble-selected",
+                        )}
+                        disabled={!hasCoaching}
+                        onClick={() => hasCoaching && setSelectedCoachingId(message.id)}
+                      >
+                        {message.text}
+                      </button>
+                      {!!message.followups?.length && (
+                        <div className="imessage-followups">
+                          {message.followups.map((text, index) => (
+                            <button
+                              key={`${message.id}-fu-${index}`}
+                              className="followup-chip"
+                              onClick={() => askFollowup(text)}
+                            >
+                              {text}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {coachingLoading && (
+                  <div className="imessage-row from-them">
+                    <span className="imessage-typing">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  </div>
+                )}
+              </div>
+              <form
+                className="imessage-input"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  sendMessage();
+                }}
+              >
+                <textarea
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="메시지 보내기"
+                  rows={1}
+                />
+                <button type="submit" className="imessage-send" disabled={!chatInput.trim()}>
+                  <ArrowUp size={16} />
+                </button>
+              </form>
+            </div>
+            <aside className="ai-coaching-panel">
+              <span className="eyebrow">AI 코칭</span>
+              {!selectedCoachingMessage && (
+                <EmptyState title="답변을 보내면 AI 코칭이 여기 표시됩니다." />
+              )}
+              {selectedCoachingMessage && !selectedCoaching && (
+                <div className="coaching-loading">
+                  <CoachingProgressBar />
+                </div>
+              )}
+              {selectedCoachingMessage && selectedCoaching && (
+                <>
+                  <blockquote className="coaching-quote">{selectedCoachingMessage.text}</blockquote>
+                  <div className="coaching-score-card">
+                    <div className="coaching-score-ring" style={{ "--score": selectedCoaching.score }}>
+                      <span>{selectedCoaching.score}</span>
+                    </div>
+                    <div>
+                      <span className="coaching-score-label">면접관 체감 점수</span>
+                      <p className="coaching-summary">{selectedCoaching.summary}</p>
+                    </div>
+                  </div>
+                  {!!selectedCoaching.strengths?.length && (
+                    <div className="coaching-callout tone-good">
+                      <div className="coaching-callout-head">
+                        <Check size={14} />
+                        <h4>잘한 점</h4>
+                      </div>
+                      <ul>
+                        {selectedCoaching.strengths.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {!!selectedCoaching.improvements?.length && (
+                    <div className="coaching-callout tone-warn">
+                      <div className="coaching-callout-head">
+                        <AlertCircle size={14} />
+                        <h4>보완할 점</h4>
+                      </div>
+                      <ul>
+                        {selectedCoaching.improvements.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {!!selectedCoaching.emphasize?.length && (
+                    <div className="coaching-callout tone-info">
+                      <div className="coaching-callout-head">
+                        <Target size={14} />
+                        <h4>강조하면 좋은 점</h4>
+                      </div>
+                      <ul>
+                        {selectedCoaching.emphasize.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {selectedCoaching.modelAnswer && (
+                    <div className="coaching-callout tone-model">
+                      <div className="coaching-callout-head">
+                        <Sparkles size={14} />
+                        <h4>AI 모범 답변</h4>
+                      </div>
+                      <p>{selectedCoaching.modelAnswer}</p>
+                    </div>
+                  )}
+                  <Button
+                    variant="primary"
+                    className="cloud-primary"
+                    icon={busy ? LoaderCircle : Cloud}
+                    disabled={busy}
+                    onClick={saveCoachedAnswer}
+                  >
+                    Answer Archive에 저장
+                  </Button>
+                </>
+              )}
+            </aside>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DotLoader() {
+  return (
+    <span className="dot-loader" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
+const coachingProgressMessages = [
+  "답변을 읽는 중...",
+  "면접관처럼 분석하는 중...",
+  "점수를 매기는 중...",
+  "코칭 포인트를 정리하는 중...",
+];
+
+function CoachingProgressBar() {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setIndex((current) => (current + 1) % coachingProgressMessages.length),
+      2200,
+    );
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="coaching-progress">
+      <div className="coaching-progress-track">
+        <div className="coaching-progress-fill" />
+      </div>
+      <span key={index} className="coaching-progress-label">
+        {coachingProgressMessages[index]}
+      </span>
     </div>
   );
 }
@@ -3141,10 +4598,22 @@ function EmptyState({ title }) {
   );
 }
 
-function Tracking({ applications, essays, onAdd, onUpdate, onDelete, notify }) {
+function Tracking({
+  applications,
+  essays,
+  interviewSets,
+  onAdd,
+  onUpdate,
+  onDelete,
+  onOpenEssayEdit,
+  onOpenInterviewSet,
+  notify,
+}) {
   const [filter, setFilter] = useState("전체");
   const [dialog, setDialog] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [essayPanel, setEssayPanel] = useState(null);
+  const [setPanel, setSetPanel] = useState(null);
   const visible =
     filter === "전체"
       ? applications
@@ -3162,12 +4631,19 @@ function Tracking({ applications, essays, onAdd, onUpdate, onDelete, notify }) {
     await onUpdate(row.id, { status });
     notify(`지원 상태를 '${status}'로 변경했습니다.`);
   };
+  const updateInterviewLink = async (row, value) => {
+    if (value === "__new__") {
+      onOpenInterviewSet(null);
+      return;
+    }
+    await onUpdate(row.id, { interviewSetId: value });
+  };
   return (
     <div className="content-page">
       <PageHeading
         eyebrow="APPLICATION PIPELINE"
-        title="State Tracking"
-        description="지원 상태와 DB에 연결된 자기소개서를 한눈에 확인합니다."
+        title="Process Tracking"
+        description="지원 상태와 DB에 연결된 자기소개서 · Interview Set을 한눈에 확인합니다."
         actions={
           <Button
             variant="primary"
@@ -3195,75 +4671,131 @@ function Tracking({ applications, essays, onAdd, onUpdate, onDelete, notify }) {
           </button>
         ))}
       </div>
-      <div className="table-wrap">
-        <table className="tracking-table">
-          <thead>
-            <tr>
-              <th>기업</th>
-              <th>직무</th>
-              <th>제출일</th>
-              <th>상태</th>
-              <th>연결된 자소서</th>
-              <th>최근 업데이트</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((row) => {
-              const essay = essays.find((item) => item.id === row.essayId);
-              return (
-                <tr key={row.id}>
-                  <td>
+      <div className="tracking-board">
+        <div className="tracking-board-head">
+          <span>지원</span>
+          <span>상태</span>
+          <span>Essay</span>
+          <span>Interview</span>
+          <span>제출일</span>
+          <span>최근 업데이트</span>
+          <span />
+        </div>
+        <div className="tracking-board-body">
+          {visible.map((row, index) => {
+            const essay = essays.find((item) => item.id === row.essayId);
+            const linkedSet = interviewSets.find((item) => item.id === row.interviewSetId);
+            const tone = ["sky", "mint", "lemon", "lilac"][index % 4];
+            return (
+              <div className="tracking-row" data-status={row.status} key={row.id}>
+                <div className="tracking-main">
+                  <span className={`tracking-avatar tone-${tone}`}>
+                    {row.company.trim().slice(0, 1) || "?"}
+                  </span>
+                  <div className="tracking-main-copy">
                     <strong>{row.company}</strong>
-                  </td>
-                  <td>{row.role}</td>
-                  <td>{row.submittedAt || "미제출"}</td>
-                  <td>
-                    <select
-                      value={row.status}
-                      onChange={(event) =>
-                        updateStatus(row, event.target.value)
-                      }
-                    >
-                      {statusOptions.map((status) => (
-                        <option key={status}>{status}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    {essay
-                      ? `${essay.role} 자기소개서 · ${essay.status}`
-                      : "연결된 자소서 없음"}
-                  </td>
-                  <td>{relativeTime(row.updatedAt)}</td>
-                  <td>
+                    <span>{row.role || "직무 미정"}</span>
+                  </div>
+                </div>
+                <div className="tracking-cell">
+                  <select
+                    className="tracking-status-select"
+                    value={row.status}
+                    onChange={(event) => updateStatus(row, event.target.value)}
+                  >
+                    {statusOptions.map((status) => (
+                      <option key={status}>{status}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="tracking-cell tracking-link-cell">
+                  <span className={cn("tracking-link-label", !essay && "is-empty")}>
+                    {essay ? `${essay.role} 자기소개서` : "연결 안 됨"}
+                  </span>
+                  {essay && (
                     <IconButton
-                      label="지원 삭제"
-                      className="danger-action table-action"
-                      onClick={() =>
-                        window.confirm("지원 항목을 삭제할까요?") &&
-                        onDelete(row.id)
-                      }
+                      label="자기소개서 보기"
+                      className="tracking-open"
+                      onClick={() => setEssayPanel(essay)}
                     >
-                      <Trash2 size={15} />
+                      <ArrowRight size={13} />
                     </IconButton>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {!visible.length && (
-          <EmptyState title="이 상태의 지원 항목이 없습니다." />
-        )}
+                  )}
+                </div>
+                <div className="tracking-cell tracking-link-cell">
+                  <select
+                    className="tracking-inline-select"
+                    value={row.interviewSetId || ""}
+                    onChange={(event) => updateInterviewLink(row, event.target.value)}
+                  >
+                    <option value="">선택 안 함</option>
+                    {interviewSets.map((set) => (
+                      <option key={set.id} value={set.id}>
+                        {set.name || `${set.applicationId ? row.company : "공통"} Set`}
+                      </option>
+                    ))}
+                    <option value="__new__">새 Set 만들기</option>
+                  </select>
+                  {linkedSet && (
+                    <IconButton
+                      label="Interview Set 보기"
+                      className="tracking-open"
+                      onClick={() => setSetPanel(linkedSet)}
+                    >
+                      <ArrowRight size={13} />
+                    </IconButton>
+                  )}
+                </div>
+                <div className="tracking-cell tracking-meta">
+                  {row.submittedAt || "미제출"}
+                </div>
+                <div className="tracking-cell tracking-meta">
+                  {relativeTime(row.updatedAt)}
+                </div>
+                <div className="tracking-cell tracking-row-actions">
+                  <IconButton
+                    label="지원 삭제"
+                    className="danger-action"
+                    onClick={() =>
+                      window.confirm("지원 항목을 삭제할까요?") &&
+                      onDelete(row.id)
+                    }
+                  >
+                    <Trash2 size={14} />
+                  </IconButton>
+                </div>
+              </div>
+            );
+          })}
+          {!visible.length && (
+            <EmptyState title="이 상태의 지원 항목이 없습니다." />
+          )}
+        </div>
       </div>
-      {dialog && (
-        <ApplicationDialog
-          onClose={() => setDialog(false)}
-          onSave={add}
-          busy={busy}
-        />
-      )}
+      <ApplicationPanel
+        open={dialog}
+        onClose={() => setDialog(false)}
+        onSave={add}
+        busy={busy}
+        essays={essays}
+      />
+      <EssaySidePanel
+        essay={essayPanel}
+        onClose={() => setEssayPanel(null)}
+        onEdit={(essay) => {
+          setEssayPanel(null);
+          onOpenEssayEdit(essay);
+        }}
+        editLabel="Writing으로 이동"
+      />
+      <InterviewSetSidePanel
+        set={setPanel}
+        onClose={() => setSetPanel(null)}
+        onOpen={(set) => {
+          setSetPanel(null);
+          onOpenInterviewSet(set);
+        }}
+      />
     </div>
   );
 }
@@ -3273,6 +4805,7 @@ export default function App() {
     googleClientId: "",
     llmEnabled: false,
     model: "gpt-5-mini",
+    llmProvider: "demo",
     demoAuthEnabled: true,
   });
   const [user, setUser] = useState(undefined);
@@ -3289,6 +4822,7 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeEssayId, setActiveEssayId] = useState("");
   const [archiveExperienceId, setArchiveExperienceId] = useState("");
+  const [interviewSetFocus, setInterviewSetFocus] = useState(null);
   const [expanded, setExpanded] = useState("source");
   const [toast, setToast] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -3304,6 +4838,7 @@ export default function App() {
     setPage(nextPage);
     window.history.replaceState({ page: nextPage }, "", `/content#${nextPage}`);
   }, []);
+  const hasEnteredRef = useRef(false);
   const loadData = useCallback(
     async (silent = false) => {
       if (!silent) setLoadingData(true);
@@ -3358,8 +4893,12 @@ export default function App() {
 
           const { data } = await supabase.auth.getSession();
           if (!active) return;
-          if (data.session?.user) enterContent(supabaseUser(data.session.user));
-          else setUser(null);
+          if (data.session?.user) {
+            hasEnteredRef.current = true;
+            enterContent(supabaseUser(data.session.user), window.location.hash.slice(1) || "archive");
+          } else {
+            setUser(null);
+          }
         } else {
           const session = await api("/api/session");
           if (active) setUser(session.user || null);
@@ -3381,8 +4920,21 @@ export default function App() {
       };
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        if (active && session?.user) enterContent(supabaseUser(session.user));
-        if (active && !session?.user) setUser(null);
+        if (!active) return;
+        if (session?.user) {
+          // Supabase re-fires this on token refresh / tab refocus, not just
+          // real sign-in — only the FIRST time should it jump to a page;
+          // afterwards just keep the user identity fresh and leave page/URL alone.
+          if (hasEnteredRef.current) {
+            setUser(supabaseUser(session.user));
+          } else {
+            hasEnteredRef.current = true;
+            enterContent(supabaseUser(session.user), window.location.hash.slice(1) || "archive");
+          }
+        } else {
+          hasEnteredRef.current = false;
+          setUser(null);
+        }
       },
     );
     return () => {
@@ -3516,9 +5068,11 @@ export default function App() {
       );
       navigate("editor", activeEssay.id);
       notify(
-        body.demo
-          ? "데모 AI가 문항 초안을 저장했습니다."
-          : "선택한 근거로 문항 초안을 저장했습니다.",
+        body.provider === "gemini"
+          ? "Gemini가 선택한 근거로 문항 초안을 저장했습니다."
+          : body.provider === "openai"
+            ? "OpenAI가 선택한 근거로 문항 초안을 저장했습니다."
+            : "데모 응답으로 문항 초안을 저장했습니다. 실제 생성은 LLM 키를 확인해 주세요.",
       );
     } catch (error) {
       notify(error.message);
@@ -3572,7 +5126,9 @@ export default function App() {
     ).item;
   const appPage = useMemo(
     () =>
-      ["archive", "writing", "tracking"].includes(page) ? page : "writing",
+      ["archive", "writing", "interview", "tracking"].includes(page)
+        ? page
+        : "writing",
     [page],
   );
 
@@ -3580,6 +5136,7 @@ export default function App() {
     return (
       <div className="app-loading">
         <Cloud size={28} fill="currentColor" />
+        <DotLoader />
         <span>{authMessage}</span>
       </div>
     );
@@ -3597,7 +5154,7 @@ export default function App() {
   if (loadingData || !data.profile)
     return (
       <div className="app-loading">
-        <LoaderCircle className="is-loading" size={26} />
+        <DotLoader />
         <span>Archive를 불러오는 중입니다.</span>
       </div>
     );
@@ -3732,11 +5289,23 @@ export default function App() {
         busy={generating}
       />
     );
+  if (page === "interview")
+    content = (
+      <Interview
+        data={data}
+        apiConfig={config}
+        onReload={() => loadData(true)}
+        notify={notify}
+        onOpenArchive={() => navigate("archive-edit")}
+        focusSet={interviewSetFocus}
+      />
+    );
   if (page === "tracking")
     content = (
       <Tracking
         applications={data.applications}
         essays={data.essays}
+        interviewSets={data.interview.sets || []}
         onAdd={(payload) =>
           mutate(
             "/api/applications",
@@ -3756,6 +5325,11 @@ export default function App() {
             "지원 항목을 삭제했습니다.",
           )
         }
+        onOpenEssayEdit={openEssay}
+        onOpenInterviewSet={(set) => {
+          setInterviewSetFocus({ id: set?.id || "", token: Date.now() });
+          navigate("interview");
+        }}
         notify={notify}
       />
     );
