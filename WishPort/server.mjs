@@ -912,6 +912,6 @@ export const server = createServer(async (req, res) => {
   }
 });
 
-if (process.env.WISHPORT_NO_LISTEN !== "1") {
+if (process.env.WISHPORT_NO_LISTEN !== "1" && !process.env.VERCEL) {
   server.listen(port, "127.0.0.1", () => console.log(`Wish Port is running at http://127.0.0.1:${port}`));
 }
